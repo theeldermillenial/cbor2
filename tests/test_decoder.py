@@ -732,15 +732,13 @@ def test_ipnetwork(impl, payload, expected):
 def test_bad_ipnetwork(impl):
     with pytest.raises(impl.CBORDecodeError) as exc:
         impl.loads(unhexlify("d90105a244c0a80064181844c0a800001818"))
-        assert str(exc.value).endswith(
-            "invalid ipnetwork value %r" % {b"\xc0\xa8\x00d": 24, b"\xc0\xa8\x00\x00": 24}
-        )
+        invalid_value = {b"\xc0\xa8\x00d": 24, b"\xc0\xa8\x00\x00": 24}
+        assert str(exc.value).endswith(f"invalid ipnetwork value {invalid_value!r}")
         assert isinstance(exc, ValueError)
     with pytest.raises(impl.CBORDecodeError) as exc:
         impl.loads(unhexlify("d90105a144c0a80064420102"))
-        assert str(exc.value).endswith(
-            "invalid ipnetwork value %r" % {b"\xc0\xa8\x00d": b"\x01\x02"}
-        )
+        invalid_value = {b"\xc0\xa8\x00d": b"\x01\x02"}
+        assert str(exc.value).endswith(f"invalid ipnetwork value {invalid_value}")
         assert isinstance(exc, ValueError)
 
 
@@ -778,6 +776,12 @@ def test_cyclic_array(impl):
 def test_cyclic_map(impl):
     decoded = impl.loads(unhexlify("d81ca100d81d00"))
     assert decoded == {0: decoded}
+
+
+def test_nested_shareable_in_array(impl):
+    decoded = impl.loads(unhexlify("82d81c82d81c61616162d81d00"))
+    assert decoded == [["a", "b"], ["a", "b"]]
+    assert decoded[0] is decoded[1]
 
 
 def test_string_ref(impl):
@@ -1022,3 +1026,151 @@ def test_oversized_read(impl, payload: bytes, tmp_path: Path) -> None:
         dummy_path.write_bytes(payload)
         with dummy_path.open("rb") as f:
             impl.load(f)
+
+
+class TestDecoderReuse:
+    """
+    Tests for correct behavior when reusing CBORDecoder instances.
+    """
+
+    def test_decoder_reuse_resets_shared_refs(self, impl):
+        """
+        Shared references should be scoped to a single decode operation,
+        not persist across multiple decodes on the same decoder instance.
+        """
+        # Message with shareable tag (28)
+        msg1 = impl.dumps(impl.CBORTag(28, "first_value"))
+
+        # Message with sharedref tag (29) referencing index 0
+        msg2 = impl.dumps(impl.CBORTag(29, 0))
+
+        # Reuse decoder across messages
+        decoder = impl.CBORDecoder(BytesIO(msg1))
+        result1 = decoder.decode()
+        assert result1 == "first_value"
+
+        # Second decode should fail - sharedref(0) doesn't exist in this context
+        decoder.fp = BytesIO(msg2)
+        with pytest.raises(impl.CBORDecodeValueError, match="shared reference"):
+            decoder.decode()
+
+    def test_decode_from_bytes_resets_shared_refs(self, impl):
+        """
+        decode_from_bytes should also reset shared references between calls.
+        """
+        msg1 = impl.dumps(impl.CBORTag(28, "value"))
+        msg2 = impl.dumps(impl.CBORTag(29, 0))
+
+        decoder = impl.CBORDecoder(BytesIO(b""))
+        decoder.decode_from_bytes(msg1)
+
+        with pytest.raises(impl.CBORDecodeValueError, match="shared reference"):
+            decoder.decode_from_bytes(msg2)
+
+    def test_shared_refs_within_single_decode(self, impl):
+        """
+        Shared references must work correctly within a single decode operation.
+
+        Note: This tests non-cyclic sibling references [shareable(x), sharedref(0)],
+        which is a different pattern from test_cyclic_array/test_cyclic_map that
+        test self-referencing structures like shareable([sharedref(0)]).
+        """
+        # [shareable("hello"), sharedref(0)] -> ["hello", "hello"]
+        data = unhexlify(
+            "82"  # array(2)
+            "d81c"  # tag(28) shareable
+            "65"  # text(5)
+            "68656c6c6f"  # "hello"
+            "d81d"  # tag(29) sharedref
+            "00"  # unsigned(0)
+        )
+
+        result = impl.loads(data)
+        assert result == ["hello", "hello"]
+        assert result[0] is result[1]  # Same object reference
+
+
+def test_decode_from_bytes_in_hook_preserves_buffer(impl):
+    """Test that calling decode_from_bytes from a hook preserves stream buffer state.
+
+    This is a documented use case from docs/customizing.rst where hooks decode
+    embedded CBOR data. Before the fix, the stream's readahead buffer would be
+    corrupted, causing subsequent reads to fail or return wrong data.
+    """
+
+    def tag_hook(decoder, tag):
+        if tag.tag == 999:
+            # Decode embedded CBOR (documented pattern)
+            return decoder.decode_from_bytes(tag.value)
+        return tag
+
+    # Test data: array with [tag(999, embedded_cbor), "after_hook", "final"]
+    # embedded_cbor encodes: [1, 2, 3]
+    data = unhexlify(
+        "83"  # array(3)
+        "d903e7"  # tag(999)
+        "44"  # bytes(4)
+        "83010203"  # embedded: array [1, 2, 3]
+        "6a"  # text(10)
+        "61667465725f686f6f6b"  # "after_hook"
+        "65"  # text(5)
+        "66696e616c"  # "final"
+    )
+
+    # Decode from stream (not bytes) to use readahead buffer
+    stream = BytesIO(data)
+    decoder = impl.CBORDecoder(stream, tag_hook=tag_hook)
+    result = decoder.decode()
+
+    # Verify all values decoded correctly
+    assert result == [[1, 2, 3], "after_hook", "final"]
+
+    # First element should be the decoded embedded CBOR
+    assert result[0] == [1, 2, 3]
+    # Second element should be "after_hook" (not corrupted)
+    assert result[1] == "after_hook"
+    # Third element should be "final"
+    assert result[2] == "final"
+
+
+def test_decode_from_bytes_deeply_nested_in_hook(impl):
+    """Test deeply nested decode_from_bytes calls preserve buffer state.
+
+    This tests tag(999, tag(888, tag(777, [1,2,3]))) where each tag value
+    is embedded CBOR that triggers the hook recursively.
+
+    Before the fix, even a single level would corrupt the buffer. With multiple
+    levels, the buffer would be completely corrupted, mixing data from different
+    BytesIO objects and the original stream.
+    """
+
+    def tag_hook(decoder, tag):
+        if tag.tag in [999, 888, 777]:
+            # Recursively decode embedded CBOR
+            return decoder.decode_from_bytes(tag.value)
+        return tag
+
+    # Test data: [tag(999, tag(888, tag(777, [1,2,3]))), "after", "final"]
+    # Each tag contains embedded CBOR
+    data = unhexlify(
+        "83"  # array(3)
+        "d903e7"  # tag(999)
+        "4c"  # bytes(12)
+        "d9037848d903094483010203"  # embedded: tag(888, tag(777, [1,2,3]))
+        "65"  # text(5)
+        "6166746572"  # "after"
+        "65"  # text(5)
+        "66696e616c"  # "final"
+    )
+
+    # Decode from stream to use readahead buffer
+    stream = BytesIO(data)
+    decoder = impl.CBORDecoder(stream, tag_hook=tag_hook)
+    result = decoder.decode()
+
+    # With the fix: all three levels of nesting work correctly
+    # Without the fix: buffer corruption at each level, test fails
+    assert result == [[1, 2, 3], "after", "final"]
+    assert result[0] == [1, 2, 3]
+    assert result[1] == "after"
+    assert result[2] == "final"

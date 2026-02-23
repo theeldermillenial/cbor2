@@ -4,7 +4,8 @@ import re
 import struct
 import sys
 from codecs import getincrementaldecoder
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from typing import IO, TYPE_CHECKING, Any, TypeVar, cast, overload
@@ -60,6 +61,7 @@ class CBORDecoder:
         "_immutable",
         "_str_errors",
         "_stringref_namespace",
+        "_decode_depth",
     )
 
     _fp: IO[bytes]
@@ -101,6 +103,7 @@ class CBORDecoder:
         self._shareables: list[object] = []
         self._stringref_namespace: list[str | bytes] | None = None
         self._immutable = False
+        self._decode_depth = 0
 
     @property
     def immutable(self) -> bool:
@@ -142,7 +145,7 @@ class CBORDecoder:
         return self._object_hook
 
     @object_hook.setter
-    def object_hook(self, value: Callable[[CBORDecoder, Mapping[Any, Any]], Any] | None) -> None:
+    def object_hook(self, value: Callable[[CBORDecoder, dict[Any, Any]], Any] | None) -> None:
         if value is None or callable(value):
             self._object_hook = value
         else:
@@ -226,13 +229,33 @@ class CBORDecoder:
             if unshared:
                 self._share_index = old_index
 
+    @contextmanager
+    def _decoding_context(self) -> Generator[None]:
+        """
+        Context manager for tracking decode depth and clearing shared state.
+
+        Shared state is cleared at the end of each top-level decode to prevent
+        shared references from leaking between independent decode operations.
+        Nested calls (from hooks) must preserve the state.
+        """
+        self._decode_depth += 1
+        try:
+            yield
+        finally:
+            self._decode_depth -= 1
+            assert self._decode_depth >= 0
+            if self._decode_depth == 0:
+                self._shareables.clear()
+                self._share_index = None
+
     def decode(self) -> object:
         """
         Decode the next value from the stream.
 
         :raises CBORDecodeError: if there is any problem decoding the stream
         """
-        return self._decode()
+        with self._decoding_context():
+            return self._decode()
 
     def decode_from_bytes(self, buf: bytes) -> object:
         """
@@ -243,12 +266,13 @@ class CBORDecoder:
         object needs to be decoded separately from the rest but while still
         taking advantage of the shared value registry.
         """
-        with BytesIO(buf) as fp:
-            old_fp = self.fp
-            self.fp = fp
-            retval = self._decode()
-            self.fp = old_fp
-            return retval
+        with self._decoding_context():
+            with BytesIO(buf) as fp:
+                old_fp = self.fp
+                self.fp = fp
+                retval = self._decode()
+                self.fp = old_fp
+                return retval
 
     @overload
     def _decode_length(self, subtype: int) -> int: ...
@@ -399,7 +423,7 @@ class CBORDecoder:
             if not self._immutable:
                 self.set_shareable(items)
             while True:
-                value = self._decode()
+                value = self._decode(unshared=True)
                 if value is break_marker:
                     break
                 else:
@@ -413,7 +437,7 @@ class CBORDecoder:
                 self.set_shareable(items)
 
             for index in range(length):
-                items.append(self._decode())
+                items.append(self._decode(unshared=True))
 
         if self._immutable:
             items_tuple = tuple(items)
@@ -597,7 +621,7 @@ class CBORDecoder:
         try:
             value = self._stringref_namespace[index]
         except IndexError:
-            raise CBORDecodeValueError("string reference %d not found" % index)
+            raise CBORDecodeValueError(f"string reference {index} not found")
 
         return value
 
@@ -617,10 +641,10 @@ class CBORDecoder:
         try:
             shared = self._shareables[value]
         except IndexError:
-            raise CBORDecodeValueError("shared reference %d not found" % value)
+            raise CBORDecodeValueError(f"shared reference {value} not found")
 
         if shared is None:
-            raise CBORDecodeValueError("shared value %d has not been initialized" % value)
+            raise CBORDecodeValueError(f"shared value {value} has not been initialized")
         else:
             return shared
 

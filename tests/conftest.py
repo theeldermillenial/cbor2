@@ -2,6 +2,7 @@ import struct
 
 import pytest
 
+import cbor2pure
 import cbor2pure._decoder
 import cbor2pure._encoder
 import cbor2pure._types
@@ -27,7 +28,7 @@ class Module:
 def impl():
     # Pure Python implementation only
     module = Module()
-    for source in (cbor2pure._types, cbor2pure._encoder, cbor2pure._decoder):
+    for source in (cbor2pure, cbor2pure._types, cbor2pure._encoder, cbor2pure._decoder):
         for name in dir(source):
             setattr(module, name, getattr(source, name))
     return module
