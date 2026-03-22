@@ -894,6 +894,54 @@ def test_load_from_file(impl, tmpdir):
     assert obj == [1, 10]
 
 
+def test_raw_tags_skips_semantic_decoders(impl):
+    """raw_tags=True returns CBORTag objects for ALL tags including 0-5."""
+    # Tag 0 wrapping a list [1, 2, 3] — NOT a datetime string
+    data = unhexlify("c083010203")
+    decoded = impl.loads(data, raw_tags=True)
+    assert isinstance(decoded, impl.CBORTag)
+    assert decoded.tag == 0
+    assert decoded.value == [1, 2, 3]
+
+    # Tag 1 wrapping a list — NOT an epoch timestamp
+    data1 = unhexlify("c183010203")
+    decoded1 = impl.loads(data1, raw_tags=True)
+    assert isinstance(decoded1, impl.CBORTag)
+    assert decoded1.tag == 1
+    assert decoded1.value == [1, 2, 3]
+
+    # Tag 2 wrapping a text string — NOT a positive bignum
+    data2 = unhexlify("c26568656c6c6f")
+    decoded2 = impl.loads(data2, raw_tags=True)
+    assert isinstance(decoded2, impl.CBORTag)
+    assert decoded2.tag == 2
+    assert decoded2.value == "hello"
+
+
+def test_raw_tags_with_tag_hook(impl):
+    """raw_tags=True combined with tag_hook: hook receives raw tags."""
+    tags_seen = []
+
+    def capture_tag(decoder, tag):
+        tags_seen.append(tag.tag)
+        return tag
+
+    data = unhexlify("c083010203")
+    decoded = impl.loads(data, tag_hook=capture_tag, raw_tags=True)
+    assert 0 in tags_seen
+    assert isinstance(decoded, impl.CBORTag)
+
+
+def test_raw_tags_false_preserves_semantic_decoding(impl):
+    """Without raw_tags, semantic tags 0-5 should still be decoded normally."""
+    data = unhexlify("c074323031332d30332d32315432303a30343a30305a")
+    decoded = impl.loads(data)
+    assert isinstance(decoded, datetime)
+
+    decoded2 = impl.loads(data, raw_tags=False)
+    assert isinstance(decoded2, datetime)
+
+
 def test_nested_dict(impl):
     value = impl.loads(unhexlify("A1D9177082010201"))
     assert type(value) is dict

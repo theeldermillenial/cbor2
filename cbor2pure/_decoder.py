@@ -62,6 +62,7 @@ class CBORDecoder:
         "_str_errors",
         "_stringref_namespace",
         "_decode_depth",
+        "_raw_tags",
     )
 
     _fp: IO[bytes]
@@ -73,6 +74,8 @@ class CBORDecoder:
         tag_hook: Callable[[CBORDecoder, CBORTag], Any] | None = None,
         object_hook: Callable[[CBORDecoder, dict[Any, Any]], Any] | None = None,
         str_errors: Literal["strict", "error", "replace"] = "strict",
+        *,
+        raw_tags: bool = False,
     ):
         """
         :param fp:
@@ -104,6 +107,7 @@ class CBORDecoder:
         self._stringref_namespace: list[str | bytes] | None = None
         self._immutable = False
         self._decode_depth = 0
+        self._raw_tags = raw_tags
 
     @property
     def immutable(self) -> bool:
@@ -479,8 +483,15 @@ class CBORDecoder:
     def decode_semantic(self, subtype: int) -> Any:
         # Major tag 6
         tagnum = self._decode_length(subtype)
-        if semantic_decoder := semantic_decoders.get(tagnum):
-            return semantic_decoder(self)
+
+        # When raw_tags is True, skip ALL built-in semantic decoders and
+        # return raw CBORTag objects.  This is essential for protocols
+        # like Cardano that reuse low-numbered tags (0-7) for
+        # application-specific purposes (e.g., era identification)
+        # rather than the CBOR semantic meanings (datetime, bignum, etc.).
+        if not self._raw_tags:
+            if semantic_decoder := semantic_decoders.get(tagnum):
+                return semantic_decoder(self)
 
         tag = CBORTag(tagnum, None)
         self.set_shareable(tag)
@@ -830,6 +841,8 @@ def loads(
     tag_hook: Callable[[CBORDecoder, CBORTag], Any] | None = None,
     object_hook: Callable[[CBORDecoder, dict[Any, Any]], Any] | None = None,
     str_errors: Literal["strict", "error", "replace"] = "strict",
+    *,
+    raw_tags: bool = False,
 ) -> Any:
     """
     Deserialize an object from a bytestring.
@@ -856,7 +869,8 @@ def loads(
     """
     with BytesIO(s) as fp:
         return CBORDecoder(
-            fp, tag_hook=tag_hook, object_hook=object_hook, str_errors=str_errors
+            fp, tag_hook=tag_hook, object_hook=object_hook, str_errors=str_errors,
+            raw_tags=raw_tags,
         ).decode()
 
 
@@ -865,6 +879,8 @@ def load(
     tag_hook: Callable[[CBORDecoder, CBORTag], Any] | None = None,
     object_hook: Callable[[CBORDecoder, dict[Any, Any]], Any] | None = None,
     str_errors: Literal["strict", "error", "replace"] = "strict",
+    *,
+    raw_tags: bool = False,
 ) -> Any:
     """
     Deserialize an object from an open file.
@@ -890,5 +906,6 @@ def load(
 
     """
     return CBORDecoder(
-        fp, tag_hook=tag_hook, object_hook=object_hook, str_errors=str_errors
+        fp, tag_hook=tag_hook, object_hook=object_hook, str_errors=str_errors,
+        raw_tags=raw_tags,
     ).decode()
