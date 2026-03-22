@@ -22,6 +22,12 @@ from ._encoder import dump as dump
 from ._encoder import dumps as dumps
 from ._encoder import shareable_encoder as shareable_encoder
 
+# Indefinite-length container types for round-trip fidelity
+from ._types import IndefiniteArray as IndefiniteArray
+from ._types import IndefiniteByteString as IndefiniteByteString
+from ._types import IndefiniteMap as IndefiniteMap
+from ._types import IndefiniteTextString as IndefiniteTextString
+
 # Re-export imports so they look like they live directly in this package
 key: str
 value: Any

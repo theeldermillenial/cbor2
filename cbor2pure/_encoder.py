@@ -22,6 +22,13 @@ from cbor2 import (
     undefined,
 )
 
+from ._types import (
+    IndefiniteArray,
+    IndefiniteByteString,
+    IndefiniteMap,
+    IndefiniteTextString,
+)
+
 # Get UndefinedType from the undefined singleton
 UndefinedType = type(undefined)
 
@@ -472,8 +479,15 @@ class CBOREncoder:
             if self._stringref(value):
                 return
 
-        self.encode_length(2, len(value))
-        self._fp_write(value)
+        if isinstance(value, IndefiniteByteString):
+            self.encode_length(2, None)  # indefinite
+            for chunk in value.chunks:
+                self.encode_length(2, len(chunk))
+                self._fp_write(chunk)
+            self.encode_break()
+        else:
+            self.encode_length(2, len(value))
+            self._fp_write(value)
 
     def encode_bytearray(self, value: bytearray) -> None:
         self.encode_bytestring(bytes(value))
@@ -483,27 +497,37 @@ class CBOREncoder:
             if self._stringref(value):
                 return
 
-        encoded = value.encode("utf-8")
-        self.encode_length(3, len(encoded))
-        self._fp_write(encoded)
+        if isinstance(value, IndefiniteTextString):
+            self.encode_length(3, None)  # indefinite
+            for chunk in value.chunks:
+                encoded = chunk.encode("utf-8")
+                self.encode_length(3, len(encoded))
+                self._fp_write(encoded)
+            self.encode_break()
+        else:
+            encoded = value.encode("utf-8")
+            self.encode_length(3, len(encoded))
+            self._fp_write(encoded)
 
     @container_encoder
     def encode_array(self, value: Sequence[Any]) -> None:
-        self.encode_length(4, len(value) if not self.indefinite_containers else None)
+        use_indefinite = self.indefinite_containers or isinstance(value, IndefiniteArray)
+        self.encode_length(4, len(value) if not use_indefinite else None)
         for item in value:
             self._encode_value(item)
 
-        if self.indefinite_containers:
+        if use_indefinite:
             self.encode_break()
 
     @container_encoder
     def encode_map(self, value: Mapping[Any, Any]) -> None:
-        self.encode_length(5, len(value) if not self.indefinite_containers else None)
+        use_indefinite = self.indefinite_containers or isinstance(value, IndefiniteMap)
+        self.encode_length(5, len(value) if not use_indefinite else None)
         for key, val in value.items():
             self._encode_value(key)
             self._encode_value(val)
 
-        if self.indefinite_containers:
+        if use_indefinite:
             self.encode_break()
 
     def encode_sortable_key(self, value: Any) -> tuple[int, bytes]:
@@ -519,8 +543,9 @@ class CBOREncoder:
     @container_encoder
     def encode_canonical_map(self, value: Mapping[Any, Any]) -> None:
         """Reorder keys according to Canonical CBOR specification"""
+        use_indefinite = self.indefinite_containers or isinstance(value, IndefiniteMap)
         keyed_keys = ((self.encode_sortable_key(key), key, value) for key, value in value.items())
-        self.encode_length(5, len(value) if not self.indefinite_containers else None)
+        self.encode_length(5, len(value) if not use_indefinite else None)
         for sortkey, realkey, value in sorted(keyed_keys):
             if self.string_referencing:
                 # String referencing requires that the order encoded is
@@ -531,7 +556,7 @@ class CBOREncoder:
                 self._fp_write(sortkey[1])
             self._encode_value(value)
 
-        if self.indefinite_containers:
+        if use_indefinite:
             self.encode_break()
 
     def encode_semantic(self, value: CBORTag) -> None:

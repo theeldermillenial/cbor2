@@ -19,7 +19,13 @@ from cbor2 import (
     undefined,
 )
 
-from ._types import break_marker
+from ._types import (
+    IndefiniteArray,
+    IndefiniteByteString,
+    IndefiniteMap,
+    IndefiniteTextString,
+    break_marker,
+)
 
 if TYPE_CHECKING:
     from decimal import Decimal
@@ -317,7 +323,7 @@ class CBORDecoder:
             while True:
                 initial_byte = self.read(1)[0]
                 if initial_byte == 0xFF:
-                    result = b"".join(buf)
+                    result = IndefiniteByteString(b"".join(buf), chunks=buf)
                     break
                 elif initial_byte >> 5 == 2:
                     length = self._decode_length(initial_byte & 0x1F)
@@ -373,7 +379,7 @@ class CBORDecoder:
             while True:
                 initial_byte = self.read(1)[0]
                 if initial_byte == 0xFF:
-                    result = "".join(buf)
+                    result = IndefiniteTextString("".join(buf), chunks=buf)
                     break
                 elif initial_byte >> 5 == 3:
                     length = self._decode_length(initial_byte & 0x1F)
@@ -423,7 +429,7 @@ class CBORDecoder:
         length = self._decode_length(subtype, allow_indefinite=True)
         if length is None:
             # Indefinite length
-            items: list[Any] = []
+            items: list[Any] = IndefiniteArray()
             if not self._immutable:
                 self.set_shareable(items)
             while True:
@@ -455,7 +461,7 @@ class CBORDecoder:
         length = self._decode_length(subtype, allow_indefinite=True)
         if length is None:
             # Indefinite length
-            dictionary: dict[Any, Any] = {}
+            dictionary: dict[Any, Any] = IndefiniteMap()
             self.set_shareable(dictionary)
             while True:
                 key = self._decode(immutable=True, unshared=True)

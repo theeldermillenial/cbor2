@@ -955,6 +955,77 @@ def test_set(impl):
     assert value == {"a", "b", "c"}
 
 
+class TestIndefiniteLengthRoundTrip:
+    """Indefinite-length containers must round-trip with identical bytes."""
+
+    def test_indefinite_array_roundtrip(self, impl):
+        original = unhexlify("9f010203ff")  # [1, 2, 3] indefinite
+        decoded = impl.loads(original)
+        assert decoded == [1, 2, 3]
+        assert isinstance(decoded, list)
+        reencoded = impl.dumps(decoded)
+        assert original == reencoded
+
+    def test_definite_array_roundtrip(self, impl):
+        original = unhexlify("83010203")  # [1, 2, 3] definite
+        decoded = impl.loads(original)
+        reencoded = impl.dumps(decoded)
+        assert original == reencoded
+
+    def test_indefinite_map_roundtrip(self, impl):
+        original = unhexlify("bf61610161620261630364646f6e65f5ff")
+        decoded = impl.loads(original)
+        assert isinstance(decoded, dict)
+        reencoded = impl.dumps(decoded)
+        assert original == reencoded
+
+    def test_definite_map_roundtrip(self, impl):
+        original = unhexlify("a2616101616202")
+        decoded = impl.loads(original)
+        reencoded = impl.dumps(decoded)
+        assert original == reencoded
+
+    def test_indefinite_bytestring_roundtrip(self, impl):
+        original = unhexlify("5f420102420304ff")  # h'0102' + h'0304'
+        decoded = impl.loads(original)
+        assert decoded == b"\x01\x02\x03\x04"
+        assert isinstance(decoded, bytes)
+        reencoded = impl.dumps(decoded)
+        assert original == reencoded
+
+    def test_definite_bytestring_roundtrip(self, impl):
+        original = unhexlify("4401020304")
+        decoded = impl.loads(original)
+        reencoded = impl.dumps(decoded)
+        assert original == reencoded
+
+    def test_indefinite_string_roundtrip(self, impl):
+        # Indefinite text: "hel" + "lo"
+        original = unhexlify("7f6368656c626c6fff")
+        decoded = impl.loads(original)
+        assert decoded == "hello"
+        assert isinstance(decoded, str)
+        reencoded = impl.dumps(decoded)
+        assert original == reencoded
+
+    def test_nested_indefinite_roundtrip(self, impl):
+        """Nested containers: indefinite array containing indefinite map."""
+        # 9F (indef array) BF (indef map) 61 61 01 FF (end map) FF (end array)
+        original = unhexlify("9fbf61610161620261630364646f6e65f5ffff")
+        decoded = impl.loads(original)
+        reencoded = impl.dumps(decoded)
+        assert original == reencoded
+
+    def test_mixed_definite_indefinite_roundtrip(self, impl):
+        """Definite array containing indefinite bytestring."""
+        # 81 (array of 1) 5F 42 AB CD 42 EF 01 FF (indef bytestring)
+        original = unhexlify("815f42abcd42ef01ff")
+        decoded = impl.loads(original)
+        reencoded = impl.dumps(decoded)
+        assert original == reencoded
+
+
+
 @pytest.mark.parametrize(
     "payload, expected",
     [
