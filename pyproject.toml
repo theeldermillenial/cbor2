@@ -27,7 +27,7 @@ classifiers = [
 ]
 requires-python = ">= 3.9"
 dependencies = ["cbor2"]
-dynamic = ["version"]
+version = "5.8.1"
 
 [project.urls]
 Changelog = "https://cbor2.readthedocs.io/en/latest/versionhistory.html"
