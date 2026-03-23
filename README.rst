@@ -49,7 +49,7 @@ Installation
 
 ::
 
-    pip install cbor2
+    pip install cbor2pure
 
 Requirements
 ------------
