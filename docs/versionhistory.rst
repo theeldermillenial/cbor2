@@ -13,6 +13,11 @@ This library adheres to `Semantic Versioning 2.0 <http://semver.org/>`_.
   indefinite-length encoding. Its return value is substituted for the array in the output. This
   allows callers to preserve the distinction between definite- and indefinite-length arrays, which
   is otherwise lost after decoding.
+- Fixed the content of a semantic tag with no designated decoder being decoded as immutable
+  (``tuple``/``frozendict``) regardless of the ``immutable`` flag. The nested array/map of such a
+  tag now honours ``immutable`` like every other container. This is a further instance of the
+  mutability bug fixed in 6.0.1 (`#295 <https://github.com/agronholm/cbor2/issues/295>`_);
+  upstream `#312 <https://github.com/agronholm/cbor2/pull/312>`_, merged for 7.0.
 
 **6.1.5** (2026-10-01)
 
