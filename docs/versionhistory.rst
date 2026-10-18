@@ -13,6 +13,12 @@ This library adheres to `Semantic Versioning 2.0 <http://semver.org/>`_.
   indefinite-length encoding. Its return value is substituted for the array in the output. This
   allows callers to preserve the distinction between definite- and indefinite-length arrays, which
   is otherwise lost after decoding.
+- Added the ``indefinite_string_hook`` and ``indefinite_map_hook`` parameters to
+  :class:`CBORDecoder`, :func:`load` and :func:`loads`. ``indefinite_string_hook`` is called for
+  each indefinite-length byte or text string with the joined value and a tuple of the byte length
+  of each chunk, in encoding order. ``indefinite_map_hook`` is called for each indefinite-length
+  map with the decoded map, before ``object_hook``. Their return values are substituted for the
+  decoded value. Neither is called for definite-length items, which decode as before.
 - Fixed the content of a semantic tag with no designated decoder being decoded as immutable
   (``tuple``/``frozendict``) regardless of the ``immutable`` flag. The nested array/map of such a
   tag now honours ``immutable`` like every other container. This is a further instance of the

@@ -46,6 +46,18 @@ Type aliases
     :canonical: ~collections.abc.Callable[[collections.abc.Mapping[Any, Any]], Any]
 
     Type of the callback needed for the ``object_hook`` decoder option.
+.. type:: ArrayHook
+    :canonical: ~collections.abc.Callable[[collections.abc.Sequence[Any], bool], Any]
+
+    Type of the callback needed for the ``array_hook`` decoder option.
+.. type:: IndefiniteStringHook
+    :canonical: ~collections.abc.Callable[[bytes | str, tuple[int, ...]], Any]
+
+    Type of the callback needed for the ``indefinite_string_hook`` decoder option.
+.. type:: IndefiniteMapHook
+    :canonical: ~collections.abc.Callable[[collections.abc.Mapping[Any, Any]], Any]
+
+    Type of the callback needed for the ``indefinite_map_hook`` decoder option.
 .. type:: TagHook
     :canonical: ~collections.abc.Callable[[CBORTag], Any]
 

@@ -1343,6 +1343,339 @@ def test_array_hook_exception() -> None:
     assert exc_info.value.__cause__.args[0] == "foo"
 
 
+@pytest.mark.parametrize("name", ["indefinite_string_hook", "indefinite_map_hook"])
+class TestIndefiniteHookAttributes:
+    def test_success(self, name: str) -> None:
+        def hook(*args: Any) -> Any:
+            return args[0]
+
+        kwargs: dict[str, Any] = {name: hook}
+        decoder = CBORDecoder(BytesIO(), **kwargs)
+        assert getattr(decoder, name) is hook
+        setattr(decoder, name, None)
+        assert getattr(decoder, name) is None
+
+    def test_not_callable(self, name: str) -> None:
+        with pytest.raises(TypeError, match=f"{name} must be callable or None"):
+            kwargs: dict[str, Any] = {name: "foo"}
+            CBORDecoder(BytesIO(), **kwargs)
+
+    def test_delete(self, name: str) -> None:
+        decoder = CBORDecoder(BytesIO())
+        with pytest.raises(AttributeError):
+            delattr(decoder, name)
+
+
+def _record_string_hook(calls: list[tuple[Any, tuple[int, ...]]]) -> Callable[..., Any]:
+    def indefinite_string_hook(value: bytes | str, chunk_lengths: tuple[int, ...]) -> Any:
+        calls.append((value, chunk_lengths))
+        return value
+
+    return indefinite_string_hook
+
+
+def _record_map_hook(calls: list[Any]) -> Callable[[Mapping[Any, Any]], Any]:
+    def indefinite_map_hook(value: Mapping[Any, Any]) -> Any:
+        calls.append(value)
+        return value
+
+    return indefinite_map_hook
+
+
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        pytest.param("5f42010243030405ff", b"\x01\x02\x03\x04\x05", id="bytes"),
+        pytest.param("7f626162626364ff", "abcd", id="text"),
+        pytest.param("bf61610161629f02ffff", {"a": 1, "b": [2]}, id="map"),
+        pytest.param("4401020304", b"\x01\x02\x03\x04", id="definite_bytes"),
+        pytest.param("a2616101616202", {"a": 1, "b": 2}, id="definite_map"),
+    ],
+)
+def test_indefinite_hooks_absent(payload: str, expected: Any) -> None:
+    """Without hooks, indefinite strings and maps decode to plain built-in types."""
+    decoded = loads(unhexlify(payload))
+    assert decoded == expected
+    assert type(decoded) is type(expected)
+
+
+def test_indefinite_hooks_not_called_for_definite_items() -> None:
+    """Definite-length strings and maps never invoke the indefinite hooks."""
+    string_calls: list[tuple[Any, tuple[int, ...]]] = []
+    map_calls: list[Any] = []
+    # {"a": h'0102', "b": [{}], "c": ""} with every item definite
+    payload = unhexlify("a36161420102616281a0616360")
+    decoded = loads(
+        payload,
+        indefinite_string_hook=_record_string_hook(string_calls),
+        indefinite_map_hook=_record_map_hook(map_calls),
+    )
+    assert decoded == {"a": b"\x01\x02", "b": [{}], "c": ""}
+    assert string_calls == []
+    assert map_calls == []
+
+
+@pytest.mark.parametrize(
+    "payload, expected_value, expected_chunks",
+    [
+        pytest.param("5f42010243030405ff", b"\x01\x02\x03\x04\x05", (2, 3), id="bytes"),
+        pytest.param("5f4040ff", b"", (0, 0), id="bytes_zero_length_chunks"),
+        pytest.param(
+            "5f410140410240ff", b"\x01\x02", (1, 0, 1, 0), id="bytes_interleaved_empty_chunks"
+        ),
+        pytest.param("5fff", b"", (), id="bytes_empty"),
+        pytest.param("7f626162606163ff", "abc", (2, 0, 1), id="text_zero_length_chunk"),
+        pytest.param("7fff", "", (), id="text_empty"),
+        pytest.param("7f62c3a46161ff", "\u00e4a", (2, 1), id="text_multibyte"),
+    ],
+)
+def test_indefinite_string_hook_chunks(
+    payload: str, expected_value: Any, expected_chunks: Any
+) -> None:
+    """The hook receives the joined string and each chunk's byte length, in order."""
+    calls: list[tuple[Any, tuple[int, ...]]] = []
+    decoded = loads(unhexlify(payload), indefinite_string_hook=_record_string_hook(calls))
+    assert decoded == expected_value
+    assert calls == [(expected_value, expected_chunks)]
+    assert type(calls[0][1]) is tuple
+
+
+def test_indefinite_string_hook_str_errors() -> None:
+    """Text chunk lengths count encoded bytes, even when str_errors replaces characters."""
+    calls: list[tuple[Any, tuple[int, ...]]] = []
+    decoded = loads(
+        unhexlify("7f62c3286161ff"),
+        str_errors="replace",
+        indefinite_string_hook=_record_string_hook(calls),
+    )
+    assert decoded == "�(a"
+    assert calls == [("�(a", (2, 1))]
+
+
+def test_indefinite_hooks_return_value_replaces() -> None:
+    """The hooks' return values replace the decoded strings and maps."""
+
+    class ChunkedBytes(bytes):
+        chunks: tuple[int, ...]
+
+    class ChunkedStr(str):
+        chunks: tuple[int, ...]
+
+    class IndefiniteDict(dict[Any, Any]):
+        pass
+
+    def indefinite_string_hook(value: bytes | str, chunk_lengths: tuple[int, ...]) -> Any:
+        wrapped = ChunkedBytes(value) if isinstance(value, bytes) else ChunkedStr(value)
+        wrapped.chunks = chunk_lengths
+        return wrapped
+
+    # {_ "a": (_ h'01', h'0203'), "b": (_ "x", "zy")}
+    payload = unhexlify("bf61615f4101420203ff61627f6178627a79ffff")
+    decoded = loads(
+        payload,
+        indefinite_string_hook=indefinite_string_hook,
+        indefinite_map_hook=IndefiniteDict,
+    )
+    assert type(decoded) is IndefiniteDict
+    assert decoded == {"a": b"\x01\x02\x03", "b": "xzy"}
+    assert type(decoded["a"]) is ChunkedBytes
+    assert decoded["a"].chunks == (1, 2)
+    assert type(decoded["b"]) is ChunkedStr
+    assert decoded["b"].chunks == (1, 2)
+
+
+def test_indefinite_map_hook_nested() -> None:
+    """The map hook fires for each indefinite map, innermost first, skipping definite ones."""
+    calls: list[Any] = []
+    # {_ 1: {2: {_ 3: 4}}, 5: {_ }}
+    payload = unhexlify("bf01a102bf0304ff05bfffff")
+    decoded = loads(payload, indefinite_map_hook=_record_map_hook(calls))
+    assert decoded == {1: {2: {3: 4}}, 5: {}}
+    assert calls == [{3: 4}, {}, {1: {2: {3: 4}}, 5: {}}]
+    assert all(type(call) is dict for call in calls)
+
+
+def test_indefinite_map_hook_empty() -> None:
+    calls: list[Any] = []
+    assert loads(unhexlify("bfff"), indefinite_map_hook=_record_map_hook(calls)) == {}
+    assert calls == [{}]
+    calls.clear()
+    assert loads(unhexlify("a0"), indefinite_map_hook=_record_map_hook(calls)) == {}
+    assert calls == []
+
+
+def test_indefinite_map_hook_immutable() -> None:
+    """Under immutable=True the map hook receives a frozendict."""
+    calls: list[Any] = []
+    decoded = loads(
+        unhexlify("bf0102ff"), indefinite_map_hook=_record_map_hook(calls), immutable=True
+    )
+    assert decoded == frozendict({1: 2})
+    assert type(calls[0]) is frozendict
+
+
+class _HashableIndefiniteDict(dict[Any, Any]):
+    def __hash__(self) -> int:  # type: ignore[override]
+        return hash(frozenset(self.items()))
+
+
+def _wrap_map(value: Mapping[Any, Any]) -> Any:
+    return _HashableIndefiniteDict(value) if isinstance(value, frozendict) else dict(value)
+
+
+@pytest.mark.parametrize("immutable", [False, True])
+def test_indefinite_map_hook_map_keys(immutable: bool) -> None:
+    """A map used as a map key is decoded as a frozendict and passed to the hook as one."""
+    calls: list[Any] = []
+
+    def indefinite_map_hook(value: Mapping[Any, Any]) -> Any:
+        calls.append(value)
+        return _wrap_map(value)
+
+    # {_ {_ 1: 2}: {_ 3: 4}}
+    decoded = loads(
+        unhexlify("bfbf0102ffbf0304ffff"),
+        indefinite_map_hook=indefinite_map_hook,
+        immutable=immutable,
+    )
+    assert len(decoded) == 1
+    key, value = next(iter(decoded.items()))
+    assert type(key) is _HashableIndefiniteDict
+    assert key == {1: 2}
+    assert value == {3: 4}
+    assert decoded[_HashableIndefiniteDict({1: 2})] == {3: 4}
+    assert [type(call) for call in calls] == [
+        frozendict,
+        frozendict if immutable else dict,
+        frozendict if immutable else dict,
+    ]
+
+
+def test_indefinite_string_hook_map_key() -> None:
+    calls: list[tuple[Any, tuple[int, ...]]] = []
+    decoded = loads(
+        unhexlify("a15f41014102ff03"), indefinite_string_hook=_record_string_hook(calls)
+    )
+    assert decoded == {b"\x01\x02": 3}
+    assert calls == [(b"\x01\x02", (1, 1))]
+
+
+def test_indefinite_map_hook_before_object_hook() -> None:
+    """object_hook receives the map hook's return value; definite maps reach it unchanged."""
+
+    class IndefiniteDict(dict[Any, Any]):
+        pass
+
+    seen: list[type] = []
+
+    def object_hook(value: Mapping[Any, Any], immutable: bool) -> Any:
+        seen.append(type(value))
+        return value
+
+    decoded = loads(
+        unhexlify("bf01a10203ff"), indefinite_map_hook=IndefiniteDict, object_hook=object_hook
+    )
+    assert decoded == {1: {2: 3}}
+    assert seen == [dict, IndefiniteDict]
+    assert type(decoded) is IndefiniteDict
+
+
+def test_indefinite_hooks_tags() -> None:
+    """Tag content is hooked before the tag is resolved by tag_hook or a semantic decoder."""
+    string_calls: list[tuple[Any, tuple[int, ...]]] = []
+    map_calls: list[Any] = []
+    hooks: dict[str, Any] = {
+        "indefinite_string_hook": _record_string_hook(string_calls),
+        "indefinite_map_hook": _record_map_hook(map_calls),
+    }
+    # Built-in semantic decoder: bignum 2(_ h'01', h'00')
+    assert loads(unhexlify("c25f41014100ff"), **hooks) == 256
+    assert string_calls == [(b"\x01\x00", (1, 1))]
+    # Unknown tag without a tag_hook: 1000({_ 1: 2})
+    tag = loads(unhexlify("d903e8bf0102ff"), **hooks)
+    assert tag == CBORTag(1000, {1: 2})
+    assert type(map_calls[-1]) is dict
+    # tag_hook and custom semantic decoders see the hooked content
+    marker = object()
+    tag_value = loads(
+        unhexlify("d903e8bf0102ff"),
+        indefinite_map_hook=lambda value: marker,
+        tag_hook=lambda tag, immutable: tag.value,
+    )
+    assert tag_value is marker
+    decoded = loads(
+        unhexlify("d903e85f4101ff"),
+        indefinite_string_hook=lambda value, chunks: (value, chunks),
+        semantic_decoders={1000: lambda value, immutable: ("decoded", value)},
+    )
+    assert decoded == ("decoded", (b"\x01", (1,)))
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param("82d81cbf0102ffd81d00", id="map"),
+        pytest.param("82d81c5f4101ffd81d00", id="bytes"),
+        pytest.param("82d81c7f6161ffd81d00", id="text"),
+    ],
+)
+def test_indefinite_hooks_shared_references(payload: str) -> None:
+    """A shared reference to a hooked item resolves to the hook's return value."""
+
+    class Wrapped:
+        def __init__(self, *args: Any) -> None:
+            self.args = args
+
+    decoded = loads(
+        unhexlify(payload), indefinite_string_hook=Wrapped, indefinite_map_hook=Wrapped
+    )
+    assert type(decoded[0]) is Wrapped
+    assert decoded[0] is decoded[1]
+
+
+def test_indefinite_string_hook_stringref() -> None:
+    """Indefinite strings stay out of the string reference namespace, hooked or not."""
+    # 256([(_ "abc"), "def", 25(0)])
+    payload = unhexlify("d90100837f63616263ff63646566d81900")
+    assert loads(payload) == ["abc", "def", "def"]
+    decoded = loads(payload, indefinite_string_hook=lambda value, chunks: ("hooked", value))
+    assert decoded == [("hooked", "abc"), "def", "def"]
+
+
+@pytest.mark.parametrize(
+    "payload, name",
+    [
+        pytest.param("5f4101ff", "indefinite_string_hook", id="bytes"),
+        pytest.param("7f6161ff", "indefinite_string_hook", id="text"),
+        pytest.param("bf0102ff", "indefinite_map_hook", id="map"),
+    ],
+)
+def test_indefinite_hooks_exception(payload: str, name: str) -> None:
+    def hook(*args: Any) -> NoReturn:
+        raise RuntimeError("foo")
+
+    with pytest.raises(CBORDecodeError) as exc_info:
+        kwargs: dict[str, Any] = {name: hook}
+        loads(unhexlify(payload), **kwargs)
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+    assert exc_info.value.__cause__.args[0] == "foo"
+
+
+@pytest.mark.parametrize("payload", ["5f4101ff", "7f6161ff", "bf0102ff"])
+def test_indefinite_hooks_disallowed_indefinite(payload: str) -> None:
+    """With allow_indefinite=False the item is rejected before any hook runs."""
+    calls: list[Any] = []
+    with pytest.raises(CBORDecodeError, match="indefinite length"):
+        loads(
+            unhexlify(payload),
+            allow_indefinite=False,
+            indefinite_string_hook=lambda *args: calls.append(args),
+            indefinite_map_hook=lambda *args: calls.append(args),
+        )
+    assert calls == []
+
+
 class TestCustomDecoder:
     def test_success(self) -> None:
         def custom_set_decoder(value: Any, immutable: bool) -> Any:
