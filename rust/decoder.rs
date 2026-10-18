@@ -132,6 +132,17 @@ pub fn shareable_decoder<'py>(
     }
 }
 
+/// Checks that a decoder hook is callable (or absent) and returns an owned reference to it.
+fn validate_hook(hook: Option<&Bound<'_, PyAny>>, name: &str) -> PyResult<Option<Py<PyAny>>> {
+    match hook {
+        Some(hook) if !hook.is_callable() => Err(PyErr::new::<PyTypeError, _>(format!(
+            "{name} must be callable or None"
+        ))),
+        Some(hook) => Ok(Some(hook.clone().unbind())),
+        None => Ok(None),
+    }
+}
+
 fn require_tuple<'py>(value: Bound<'py, PyAny>, length: usize) -> PyResult<Bound<'py, PyTuple>> {
     let array: Bound<'py, PyTuple> = value
         .cast_into()
@@ -181,6 +192,18 @@ fn require_bignum_bytes(value: Bound<'_, PyAny>) -> PyResult<Bound<'_, PyBytes>>
 ///     deserialized array, and its return value is substituted for the array in the
 ///     deserialized output. It allows callers to preserve the distinction between
 ///     definite- and indefinite-length arrays, which is otherwise lost after decoding.
+/// :param indefinite_string_hook:
+///     callable that takes 2 arguments: the decoded string (a :class:`bytes` for a byte
+///     string, or a :class:`str` for a text string), and a :class:`tuple` holding the
+///     length in bytes of each chunk, in encoding order. This callback is invoked only for
+///     strings that used indefinite-length encoding, and its return value is substituted
+///     for the string in the deserialized output. Definite-length strings never invoke it.
+/// :param indefinite_map_hook:
+///     callable that takes 1 argument: the decoded map (a :class:`dict`, or a
+///     :class:`frozendict` when it is decoded as immutable). This callback is invoked only
+///     for maps that used indefinite-length encoding, before ``object_hook``, and its
+///     return value is substituted for the map (and passed to ``object_hook``, if set).
+///     Definite-length maps never invoke it.
 /// :param semantic_decoders:
 ///     An optional mapping for overriding the decoding for select semantic tags.
 ///     The value is a mapping of semantic tags (integers) to callables that take
@@ -206,6 +229,8 @@ pub struct CBORDecoder {
     tag_hook: Option<Py<PyAny>>,
     object_hook: Option<Py<PyAny>>,
     array_hook: Option<Py<PyAny>>,
+    indefinite_string_hook: Option<Py<PyAny>>,
+    indefinite_map_hook: Option<Py<PyAny>>,
     semantic_decoders: Option<Py<PyMapping>>,
     str_errors: Option<Py<PyString>>,
     #[pyo3(get)]
@@ -232,6 +257,8 @@ impl CBORDecoder {
         tag_hook: Option<&Bound<'_, PyAny>>,
         object_hook: Option<&Bound<'_, PyAny>>,
         array_hook: Option<&Bound<'_, PyAny>>,
+        indefinite_string_hook: Option<&Bound<'_, PyAny>>,
+        indefinite_map_hook: Option<&Bound<'_, PyAny>>,
         semantic_decoders: Option<&Bound<'_, PyMapping>>,
         str_errors: &str,
         read_size: usize,
@@ -250,6 +277,8 @@ impl CBORDecoder {
             tag_hook: None,
             object_hook: None,
             array_hook: None,
+            indefinite_string_hook: None,
+            indefinite_map_hook: None,
             str_errors: None,
             read_size,
             max_depth,
@@ -268,6 +297,8 @@ impl CBORDecoder {
         this.set_tag_hook(tag_hook)?;
         this.set_object_hook(object_hook)?;
         this.set_array_hook(array_hook)?;
+        this.set_indefinite_string_hook(indefinite_string_hook)?;
+        this.set_indefinite_map_hook(indefinite_map_hook)?;
         this.set_str_errors(&bound_str_errors)?;
         Ok(this)
     }
@@ -411,6 +442,22 @@ impl CBORDecoder {
         Ok(Value(signed_int.into_bound_py_any(py)?))
     }
 
+    /// Applies the indefinite_string_hook (if any) to a joined indefinite-length string,
+    /// passing the byte length of each chunk in encoding order.
+    fn call_indefinite_string_hook<'py>(
+        &self,
+        py: Python<'py>,
+        value: Bound<'py, PyAny>,
+        chunk_lengths: Vec<usize>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        match self.indefinite_string_hook.as_ref() {
+            Some(hook) => hook
+                .bind(py)
+                .call1((value, PyTuple::new(py, chunk_lengths)?)),
+            None => Ok(value),
+        }
+    }
+
     fn decode_bytestring<'py>(
         &mut self,
         py: Python<'py>,
@@ -421,6 +468,7 @@ impl CBORDecoder {
             None => {
                 // Indefinite length
                 let sys_maxsize = *SYS_MAXSIZE.get(py).unwrap();
+                let mut chunk_lengths: Vec<usize> = Vec::new();
                 let bytes = PyBytes::new_with_writer(py, 0, |writer| {
                     loop {
                         let (major_type, subtype) = self.read_major_and_subtype(py)?;
@@ -435,6 +483,7 @@ impl CBORDecoder {
                                 let length = length as usize;
                                 let chunk = self.read(py, length)?;
                                 writer.write_all(&chunk)?;
+                                chunk_lengths.push(length);
                             }
                             (7, 31) => break Ok(()), // break marker
                             _ => {
@@ -446,7 +495,8 @@ impl CBORDecoder {
                         }
                     }
                 })?;
-                Ok(Value(bytes.into_any()))
+                self.call_indefinite_string_hook(py, bytes.into_any(), chunk_lengths)
+                    .map(Value)
             }
             Some(length) if length <= 65536 => {
                 let bytes = self.read(py, length)?;
@@ -478,6 +528,7 @@ impl CBORDecoder {
             None => {
                 // Indefinite length
                 let mut parts: Vec<Bound<'py, PyString>> = Vec::new();
+                let mut chunk_lengths: Vec<usize> = Vec::new();
                 loop {
                     let (major_type, subtype) = self.read_major_and_subtype(py)?;
                     let sys_maxsize = *SYS_MAXSIZE.get(py).unwrap();
@@ -502,12 +553,15 @@ impl CBORDecoder {
                                     .and_then(|string| string.cast_into().map_err(PyErr::from)),
                             }?;
                             parts.push(decoded);
+                            chunk_lengths.push(length);
                         }
                         (7, 31) => {
                             // break marker
-                            break PyString::new(py, "")
-                                .call_method1(intern!(py, "join"), (PyList::new(py, parts)?,))
-                                .map(|joined| Value(joined.into_any()));
+                            let joined = PyString::new(py, "")
+                                .call_method1(intern!(py, "join"), (PyList::new(py, parts)?,))?;
+                            break self
+                                .call_indefinite_string_hook(py, joined, chunk_lengths)
+                                .map(Value);
                         }
                         _ => {
                             return Err(CBORDecodeError::new_err(format!(
@@ -745,9 +799,32 @@ impl CBORDecoder {
             }
         }
 
+        // Apply the indefinite_map_hook (if any) to a completed indefinite-length map. It runs
+        // before object_hook, which then receives its return value. Definite-length maps never
+        // reach this, so they decode without calling into Python.
+        #[inline]
+        fn maybe_call_indefinite_map_hook<'py>(
+            py: Python<'py>,
+            map: Bound<'py, PyAny>,
+            indefinite_map_hook: Option<&Py<PyAny>>,
+        ) -> PyResult<Bound<'py, PyAny>> {
+            if let Some(hook) = indefinite_map_hook {
+                hook.bind(py).call1((map,))
+            } else {
+                Ok(map)
+            }
+        }
+
         let object_hook = self.object_hook.as_ref().map(|hook| hook.clone_ref(py));
         let allow_duplicate_keys = self.allow_duplicate_keys;
         let length_or_none = self.decode_length_as_usize(py, subtype)?;
+        let indefinite_map_hook = if length_or_none.is_none() {
+            self.indefinite_map_hook
+                .as_ref()
+                .map(|hook| hook.clone_ref(py))
+        } else {
+            None
+        };
 
         // Return immediately if this is an empty dict
         if let Some(length) = length_or_none
@@ -814,13 +891,13 @@ impl CBORDecoder {
                                 "missing value for key in indefinite-length map",
                             ));
                         }
-                        let container = create_frozen_dict(py, take(&mut items))?;
-                        let transformed = maybe_call_object_hook(
+                        let container = maybe_call_indefinite_map_hook(
                             py,
-                            container.into_any(),
-                            object_hook.as_ref(),
-                            immutable,
+                            create_frozen_dict(py, take(&mut items))?,
+                            indefinite_map_hook.as_ref(),
                         )?;
+                        let transformed =
+                            maybe_call_object_hook(py, container, object_hook.as_ref(), immutable)?;
                         Ok(CompleteFrame(transformed))
                     } else if let Some(key) = key.take() {
                         if !allow_duplicate_keys {
@@ -889,13 +966,13 @@ impl CBORDecoder {
                                 "missing value for key in indefinite-length map",
                             ));
                         }
-                        let dict = replace(&mut dict, PyDict::new(py));
-                        let transformed = maybe_call_object_hook(
+                        let dict = maybe_call_indefinite_map_hook(
                             py,
-                            dict.into_any(),
-                            object_hook.as_ref(),
-                            immutable,
+                            replace(&mut dict, PyDict::new(py)).into_any(),
+                            indefinite_map_hook.as_ref(),
                         )?;
+                        let transformed =
+                            maybe_call_object_hook(py, dict, object_hook.as_ref(), immutable)?;
                         Ok(CompleteFrame(transformed))
                     } else if let Some(key) = key.take() {
                         if !allow_duplicate_keys {
@@ -1509,6 +1586,8 @@ impl CBORDecoder {
         tag_hook = None,
         object_hook = None,
         array_hook = None,
+        indefinite_string_hook = None,
+        indefinite_map_hook = None,
         semantic_decoders = None,
         str_errors = "strict",
         read_size = 4096,
@@ -1522,6 +1601,8 @@ impl CBORDecoder {
         tag_hook: Option<&Bound<'_, PyAny>>,
         object_hook: Option<&Bound<'_, PyAny>>,
         array_hook: Option<&Bound<'_, PyAny>>,
+        indefinite_string_hook: Option<&Bound<'_, PyAny>>,
+        indefinite_map_hook: Option<&Bound<'_, PyAny>>,
         semantic_decoders: Option<&Bound<'_, PyMapping>>,
         str_errors: &str,
         read_size: usize,
@@ -1536,6 +1617,8 @@ impl CBORDecoder {
             tag_hook,
             object_hook,
             array_hook,
+            indefinite_string_hook,
+            indefinite_map_hook,
             semantic_decoders,
             str_errors,
             read_size,
@@ -1639,6 +1722,32 @@ impl CBORDecoder {
         } else {
             self.array_hook = None;
         }
+        Ok(())
+    }
+
+    #[getter]
+    fn indefinite_string_hook(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.indefinite_string_hook
+            .as_ref()
+            .map(|hook| hook.clone_ref(py))
+    }
+
+    #[setter]
+    fn set_indefinite_string_hook(&mut self, hook: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.indefinite_string_hook = validate_hook(hook, "indefinite_string_hook")?;
+        Ok(())
+    }
+
+    #[getter]
+    fn indefinite_map_hook(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.indefinite_map_hook
+            .as_ref()
+            .map(|hook| hook.clone_ref(py))
+    }
+
+    #[setter]
+    fn set_indefinite_map_hook(&mut self, hook: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.indefinite_map_hook = validate_hook(hook, "indefinite_map_hook")?;
         Ok(())
     }
 
