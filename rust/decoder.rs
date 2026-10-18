@@ -466,6 +466,8 @@ impl CBORDecoder {
             None => {
                 // Indefinite length
                 let sys_maxsize = *SYS_MAXSIZE.get(py).unwrap();
+                // Chunk lengths are only recorded when a hook will receive them
+                let record_chunks = self.indefinite_string_hook.is_some();
                 let mut chunk_lengths: Vec<usize> = Vec::new();
                 let bytes = PyBytes::new_with_writer(py, 0, |writer| {
                     loop {
@@ -481,7 +483,9 @@ impl CBORDecoder {
                                 let length = length as usize;
                                 let chunk = self.read(py, length)?;
                                 writer.write_all(&chunk)?;
-                                chunk_lengths.push(length);
+                                if record_chunks {
+                                    chunk_lengths.push(length);
+                                }
                             }
                             (7, 31) => break Ok(()), // break marker
                             _ => {
@@ -526,6 +530,8 @@ impl CBORDecoder {
             None => {
                 // Indefinite length
                 let mut parts: Vec<Bound<'py, PyString>> = Vec::new();
+                // Chunk lengths are only recorded when a hook will receive them
+                let record_chunks = self.indefinite_string_hook.is_some();
                 let mut chunk_lengths: Vec<usize> = Vec::new();
                 loop {
                     let (major_type, subtype) = self.read_major_and_subtype(py)?;
@@ -551,7 +557,9 @@ impl CBORDecoder {
                                     .and_then(|string| string.cast_into().map_err(PyErr::from)),
                             }?;
                             parts.push(decoded);
-                            chunk_lengths.push(length);
+                            if record_chunks {
+                                chunk_lengths.push(length);
+                            }
                         }
                         (7, 31) => {
                             // break marker
