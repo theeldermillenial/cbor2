@@ -8,7 +8,7 @@ use crate::types::STOCK_FROZENDICT;
 use crate::types::{
     CBORDecodeEOF, CBORDecodeError, DECIMAL_TYPE, FRACTION_TYPE, IPV4ADDRESS_TYPE,
     IPV4INTERFACE_TYPE, IPV4NETWORK_TYPE, IPV6ADDRESS_TYPE, IPV6INTERFACE_TYPE, IPV6NETWORK_TYPE,
-    STOCK_SIMPLE_VALUE, STOCK_TAG, STOCK_UNDEFINED, UUID_TYPE,
+    STOCK_SIMPLE_VALUE, STOCK_UNDEFINED, UUID_TYPE, new_stock_tag,
 };
 use crate::utils::{PyImportable, create_exc_from, raise_exc_from};
 use half::f16;
@@ -1114,7 +1114,7 @@ impl CBORDecoder {
                     .as_ref()
                     .map(|hook| hook.clone_ref(py).into_bound(py));
                 let callback = Box::new(move |item: Bound<'py, PyAny>, _immutable: bool| {
-                    let tag = STOCK_TAG.get(py)?.call1((tagnum, item))?;
+                    let tag = new_stock_tag(py, tagnum, item)?;
                     if let Some(tag_hook) = tag_hook.take() {
                         tag_hook.call1((&tag, immutable)).map(CompleteFrame)
                     } else {
@@ -1484,7 +1484,7 @@ impl CBORDecoder {
         let value = value.cast_into::<PyBytes>()?;
         let addr_obj = match value.len()? {
             4 | 16 => IPADDRESS_FUNC.get(py)?.call1((value,)),
-            6 => STOCK_TAG.get(py)?.call1((260, value)), // MAC address
+            6 => new_stock_tag(py, 260, value.into_any()), // MAC address
             length => Err(CBORDecodeError::new_err(format!(
                 "invalid IP address length ({length})"
             ))),

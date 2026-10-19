@@ -1,5 +1,7 @@
 use crate::utils::PyImportable;
-use pyo3::import_exception;
+use pyo3::exceptions::PyTypeError;
+use pyo3::types::{PyTuple, PyType, PyTypeMethods};
+use pyo3::{Bound, IntoPyObjectExt, PyAny, PyErr, PyResult, Python, import_exception};
 
 pub static DECIMAL_TYPE: PyImportable = PyImportable::new("decimal", "Decimal");
 pub static FRACTION_TYPE: PyImportable = PyImportable::new("fractions", "Fraction");
@@ -23,3 +25,26 @@ pub static STOCK_SIMPLE_VALUE: PyImportable = PyImportable::new("cbor2", "CBORSi
 pub static STOCK_UNDEFINED: PyImportable = PyImportable::new("cbor2", "undefined");
 #[cfg(not(Py_3_15))]
 pub static STOCK_FROZENDICT: PyImportable = PyImportable::new("cbor2", "frozendict");
+
+/// Construct a cbor2 ``CBORTag`` through its type's ``tp_new`` slot. This is what calling the
+/// class does, minus the ``type.__call__`` dispatch and the no-op ``object.__init__`` call.
+pub fn new_stock_tag<'py>(
+    py: Python<'py>,
+    tag: u64,
+    value: Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let class = STOCK_TAG
+        .get(py)?
+        .cast_into::<PyType>()
+        .map_err(PyErr::from)?;
+    let args = PyTuple::new(py, [tag.into_bound_py_any(py)?, value])?;
+    let type_ptr = class.as_type_ptr();
+    // SAFETY: ``type_ptr`` is a live type object (``class`` holds a reference), and ``tp_new``
+    // is called with that type, a tuple of positional arguments and no keywords.
+    unsafe {
+        let tp_new = (*type_ptr)
+            .tp_new
+            .ok_or_else(|| PyTypeError::new_err("cbor2.CBORTag cannot be instantiated"))?;
+        Bound::from_owned_ptr_or_err(py, tp_new(type_ptr, args.as_ptr(), std::ptr::null_mut()))
+    }
+}
