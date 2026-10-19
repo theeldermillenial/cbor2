@@ -31,31 +31,28 @@ jobs:
         allow-prereleases: true
         cache: pip
         cache-dependency-path: pyproject.toml
-    - name: Install cargo-llvm-cov (cached)
-      uses: taiki-e/install-action@v2
-      with:
-        tool: cargo-llvm-cov
-    - name: Install the project and its dependencies and run pytest
-      shell: bash
-      run: |
-        eval "$(cargo llvm-cov show-env --manifest-path rust/Cargo.toml --sh)"
-        pip install --group test -e .
-        coverage run -m pytest -v
-        cargo llvm-cov report --lcov --manifest-path rust/Cargo.toml --output-path coverage.lcov
+    - name: Install the project and its dependencies
+      run: pip install --group test -e .
       env:
         RUST_BACKTRACE: "1"
         RUSTFLAGS: "--deny warnings"
+    - name: Show the installed cbor2 and cbor2pure
+      run: pip show cbor2 cbor2pure
+    - name: Test with pytest
+      run: python -m pytest -v
+      env:
         TZ: America/New_York
-    - name: Generate Python coverage report
-      run: coverage xml
-    - name: Trust Coveralls Homebrew tap (Homebrew 6 requirement)
-      if: runner.os == 'macOS'
-      run: brew trust coverallsapp/coveralls
-    - name: Upload Coverage
-      uses: coverallsapp/github-action@v2
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - name: Set up Python
+      uses: actions/setup-python@v7
       with:
-        parallel: true
-        files: coverage.xml coverage.lcov
+        python-version: "3.14"
+    - name: Run clippy
+      run: cargo clippy --manifest-path rust/Cargo.toml --all-targets -- --deny warnings
 
   test-i686:
     runs-on: ubuntu-latest
@@ -85,13 +82,3 @@ jobs:
             pip install --group test -e . &&
             python -m pytest --color=yes -v
           '
-
-  coveralls:
-    name: Finish Coveralls
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-    - name: Finished
-      uses: coverallsapp/github-action@v2
-      with:
-        parallel-finished: true

@@ -19,7 +19,6 @@ jobs:
           - windows-11-arm
           - macos-latest
     runs-on: ${{ matrix.os }}
-    environment: release
     steps:
     - uses: actions/checkout@v7
     - name: Install the Rust toolchain
@@ -32,6 +31,9 @@ jobs:
       env:
         CIBW_ARCHS: "auto"
         CIBW_TEST_GROUPS: "test"
+        # The decoder builds cbor2's own classes, so the tests need stock cbor2 installed
+        # (keep in step with [project] dependencies)
+        CIBW_TEST_REQUIRES: "cbor2 >= 6.1.5, < 7"
         CIBW_TEST_COMMAND: "pytest {project}/tests"
         # Install Rust in cibuildwheel environments
         CIBW_BEFORE_ALL_LINUX: curl -sSf https://sh.rustup.rs | sh -s -- -y
@@ -45,7 +47,6 @@ jobs:
 
   sdist:
     runs-on: ubuntu-latest
-    environment: release
     steps:
     - uses: actions/checkout@v7
     - name: Set up Python
@@ -66,7 +67,6 @@ jobs:
       - binary-wheels
       - sdist
     runs-on: ubuntu-latest
-    environment: release
     permissions:
       id-token: write
     steps:
