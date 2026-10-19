@@ -33,10 +33,11 @@ dependencies = ["cbor2 >= 6.1.5, < 7"]
 dynamic = ["version"]
 
 [project.urls]
-Changelog = "https://cbor2.readthedocs.io/en/latest/versionhistory.html"
-Documentation = "https://cbor2.readthedocs.org/en/latest/"
-"Source Code" = "https://github.com/agronholm/cbor2"
-"Issue Tracker" = "https://github.com/agronholm/cbor2/issues"
+Changelog = "https://github.com/cffls/cbor2pure/blob/master/docs/versionhistory.rst"
+Documentation = "https://cbor2.readthedocs.io/en/latest/"
+"Source Code" = "https://github.com/cffls/cbor2pure"
+"Issue Tracker" = "https://github.com/cffls/cbor2pure/issues"
+Upstream = "https://github.com/agronholm/cbor2"
 
 [project.scripts]
 cbor2pure = "cbor2pure.tool:main"

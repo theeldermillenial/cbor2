@@ -5,6 +5,35 @@ Version history
 
 This library adheres to `Semantic Versioning 2.0 <http://semver.org/>`_.
 
+cbor2pure releases mirror cbor2's: cbor2pure ``X.Y.Z`` is built on cbor2 ``X.Y.Z``, and
+``X.Y.Z.postN`` is a cbor2pure-only revision. The cbor2pure entries list only what differs from
+the cbor2 release of the same version, which follows them.
+
+**6.1.5** (cbor2pure, UNRELEASED)
+
+- **BACKWARD INCOMPATIBLE** Rebased on cbor2 6.1.5, which replaced the pure-Python and C
+  implementations with a single Rust extension. cbor2pure is now compiled as well, and requires
+  Python 3.10 or later. The pure-Python implementation remains available in cbor2pure 5.x.
+- **BACKWARD INCOMPATIBLE** cbor2pure is now decode-only and uses cbor2's own types:
+  :func:`dumps`, :func:`dump`, :class:`CBOREncoder`, :func:`shareable_encoder`, the value
+  classes and the exception classes are re-exported from cbor2, which is now a dependency
+  (``cbor2 >= 6.1.5, < 7``). The decoder returns cbor2's :class:`CBORTag`,
+  :class:`CBORSimpleValue`, ``frozendict`` and ``undefined``, and raises cbor2's
+  :exc:`CBORDecodeError` and :exc:`CBORDecodeEOF`
+- Added the ``array_hook`` decoder parameter, called for each array with the decoded array and
+  whether it used indefinite-length encoding
+- Added the ``indefinite_string_hook`` decoder parameter, called for each indefinite-length byte
+  or text string with the joined value and the length of each chunk in bytes
+- Added the ``indefinite_map_hook`` decoder parameter, called for each indefinite-length map
+- Changed the content of a tag with no registered decoder to be decoded according to the
+  ``immutable`` flag, instead of always as immutable
+- A value-sharing reference (tag 29) to a tag with no registered decoder, from inside that tag's
+  own value, raises :exc:`CBORDecodeError` instead of building the cycle, because cbor2's
+  :class:`CBORTag` value is read-only
+- Includes the decoder fix merged into cbor2 after 6.1.5 for shared references (tag 29)
+  building object graphs deeper than ``max_depth``
+  (`GHSA-55vx-2phh-7grr <https://github.com/agronholm/cbor2/security/advisories/GHSA-55vx-2phh-7grr>`_)
+
 **UNRELEASED**
 
 - Documented decoding concatenated CBOR objects with EOF checks between objects

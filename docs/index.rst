@@ -1,8 +1,8 @@
-CBOR2
-=====
+cbor2pure
+=========
 
 .. include:: ../README.rst
-   :start-line: 16
+   :start-line: 10
 
 Table of contents
 -----------------
