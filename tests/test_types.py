@@ -20,7 +20,7 @@ class TestUndefined:
         platform.python_implementation() == "PyPy", reason="PyPy does not raise TypeError"
     )
     def test_singleton(self) -> None:
-        with pytest.raises(TypeError, match="cannot create 'cbor2pure.UndefinedType' instances"):
+        with pytest.raises(TypeError, match="cannot create 'cbor2.UndefinedType' instances"):
             type(undefined)()
 
 

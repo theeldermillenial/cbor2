@@ -1,7 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
 mod decoder;
-mod encoder;
 mod types;
 mod utils;
 
@@ -15,13 +14,6 @@ mod _cbor2 {
     use pyo3::prelude::*;
     use pyo3::sync::PyOnceLock;
     use pyo3::types::{PyBytes, PyMapping};
-    use std::mem::take;
-
-    #[pymodule_export]
-    use crate::encoder::CBOREncoder;
-
-    #[pymodule_export]
-    use crate::encoder::shareable_encoder;
 
     #[pymodule_export]
     use crate::decoder::CBORDecoder;
@@ -29,38 +21,9 @@ mod _cbor2 {
     #[pymodule_export]
     use crate::decoder::shareable_decoder;
 
-    #[pymodule_export]
-    use crate::types::CBORTag;
-
-    #[pymodule_export]
-    use crate::types::CBORSimpleValue;
-
-    #[cfg(not(Py_3_15))]
-    #[pymodule_export]
-    use crate::types::FrozenDict;
-
-    use crate::types::UndefinedType;
-
-    #[pymodule_export]
-    use crate::types::CBORError;
-
-    #[pymodule_export]
-    use crate::types::CBOREncodeError;
-
-    #[pymodule_export]
-    use crate::types::CBOREncodeTypeError;
-
-    #[pymodule_export]
-    use crate::types::CBOREncodeValueError;
-
-    #[pymodule_export]
-    use crate::types::CBORDecodeError;
-
-    #[pymodule_export]
-    use crate::types::CBORDecodeEOF;
+    // The value and error classes are stock cbor2's (re-exported by the Python package).
 
     pub static SYS_MAXSIZE: PyOnceLock<u64> = PyOnceLock::new();
-    pub static UNDEFINED: PyOnceLock<Py<UndefinedType>> = PyOnceLock::new();
     pub static BREAK_MARKER: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
 
     ///  Deserialize an object from an open file.
@@ -289,183 +252,9 @@ mod _cbor2 {
         decoder.decode(py, immutable)
     }
 
-    /// Serialize an object to a file.
-    ///
-    /// :param obj:
-    ///     the object to serialize
-    /// :param fp:
-    ///     the file to write to (any file-like object opened for writing in binary mode)
-    /// :param datetime_as_timestamp:
-    ///     set to ``True`` to serialize datetimes as UNIX timestamps (this makes datetimes
-    ///     more concise on the wire, but loses the timezone information)
-    /// :param timezone:
-    ///     the default timezone to use for serializing naive datetimes; if this is not
-    ///     specified naive datetimes will throw a :exc:`ValueError` when encoding is attempted
-    /// :param value_sharing:
-    ///     set to ``True`` to allow more efficient serializing of repeated values
-    ///     and, more importantly, cyclic data structures, at the cost of extra
-    ///     line overhead
-    /// :param encoders:
-    ///     An optional mapping for overriding the encoding for select Python types.
-    ///     Each key in this mapping should be a Python type object, and the value a callable
-    ///     that takes two arguments: the encoder object and the object to encode.
-    /// :param default:
-    ///     a callable that is called by the encoder with two arguments (the encoder
-    ///     instance and the value being encoded) when no suitable encoder has been found,
-    ///     and should use the methods on the encoder to encode any objects it wants to add
-    ///     to the data stream
-    /// :param canonical:
-    ///     when ``True``, use "canonical" CBOR representation; this typically involves
-    ///     sorting maps, sets, etc. into a pre-determined order ensuring that
-    ///     serializations are comparable without decoding
-    /// :param date_as_datetime:
-    ///     set to ``True`` to serialize date objects as datetimes (CBOR tag 0), which was
-    ///     the default behavior in previous releases (cbor2 <= 4.1.2).
-    /// :param string_referencing:
-    ///     set to ``True`` to allow more efficient serializing of repeated string values
-    /// :param indefinite_containers:
-    ///     encode containers as indefinite (use stop code instead of specifying length)
-    #[pyfunction]
-    #[pyo3(signature = (
-        obj,
-        fp,
-        *,
-        datetime_as_timestamp = false,
-        timezone = None,
-        value_sharing = false,
-        encoders = None,
-        default = None,
-        canonical = false,
-        date_as_datetime = false,
-        string_referencing = false,
-        indefinite_containers = false
-    ))]
-    fn dump<'py>(
-        py: Python<'py>,
-        obj: &Bound<'py, PyAny>,
-        fp: &Bound<'py, PyAny>,
-        datetime_as_timestamp: bool,
-        timezone: Option<&Bound<'py, PyAny>>,
-        value_sharing: bool,
-        encoders: Option<&Bound<'py, PyMapping>>,
-        default: Option<&Bound<'py, PyAny>>,
-        canonical: bool,
-        date_as_datetime: bool,
-        string_referencing: bool,
-        indefinite_containers: bool,
-    ) -> PyResult<()> {
-        let encoder = CBOREncoder::new(
-            fp,
-            datetime_as_timestamp,
-            timezone,
-            value_sharing,
-            encoders,
-            default,
-            canonical,
-            date_as_datetime,
-            string_referencing,
-            indefinite_containers,
-        )?;
-        let instance = Bound::new(py, encoder)?;
-        CBOREncoder::encode(&instance, obj)
-    }
-
-    /// Serialize an object to a bytestring.
-    ///
-    /// :param obj:
-    ///     the object to serialize
-    /// :param datetime_as_timestamp:
-    ///     set to ``True`` to serialize datetimes as UNIX timestamps (this makes datetimes
-    ///     more concise on the wire, but loses the timezone information)
-    /// :param timezone:
-    ///     the default timezone to use for serializing naive datetimes; if this is not
-    ///     specified naive datetimes will throw a :exc:`ValueError` when encoding is
-    ///     attempted
-    /// :param value_sharing:
-    ///     set to ``True`` to allow more efficient serializing of repeated values
-    ///     and, more importantly, cyclic data structures, at the cost of extra
-    ///     line overhead
-    /// :param encoders:
-    ///     An optional mapping for overriding the encoding for select Python types.
-    ///     Each key in this mapping should be a Python type object, and the value a callable
-    ///     that takes two arguments: the encoder object and the object to encode.
-    /// :param default:
-    ///     a callable that is called by the encoder with two arguments (the encoder
-    ///     instance and the value being encoded) when no suitable encoder has been found,
-    ///     and should use the methods on the encoder to encode any objects it wants to add
-    ///     to the data stream
-    /// :param canonical:
-    ///     when ``True``, use "canonical" CBOR representation; this typically involves
-    ///     sorting maps, sets, etc. into a pre-determined order ensuring that
-    ///     serializations are comparable without decoding
-    /// :param date_as_datetime:
-    ///     set to ``True`` to serialize date objects as datetimes (CBOR tag 0), which was
-    ///     the default behavior in previous releases (cbor2 <= 4.1.2).
-    /// :param string_referencing:
-    ///     set to ``True`` to allow more efficient serializing of repeated string values
-    /// :param indefinite_containers:
-    ///     encode containers as indefinite (use stop code instead of specifying length)
-    /// :return: the serialized output
-    #[pyfunction]
-    #[pyo3(signature = (
-        obj,
-        *,
-        datetime_as_timestamp = false,
-        timezone = None,
-        value_sharing = false,
-        encoders = None,
-        default = None,
-        canonical = false,
-        date_as_datetime = false,
-        string_referencing = false,
-        indefinite_containers = false
-    ))]
-    fn dumps<'py>(
-        py: Python<'py>,
-        obj: &Bound<'py, PyAny>,
-        datetime_as_timestamp: bool,
-        timezone: Option<&Bound<'_, PyAny>>,
-        value_sharing: bool,
-        encoders: Option<&Bound<'py, PyMapping>>,
-        default: Option<&Bound<'_, PyAny>>,
-        canonical: bool,
-        date_as_datetime: bool,
-        string_referencing: bool,
-        indefinite_containers: bool,
-    ) -> PyResult<Vec<u8>> {
-        let encoder = CBOREncoder::new_internal(
-            None,
-            datetime_as_timestamp,
-            timezone,
-            value_sharing,
-            encoders,
-            default,
-            canonical,
-            date_as_datetime,
-            string_referencing,
-            indefinite_containers,
-        )?;
-        let instance = Bound::new(py, encoder)?;
-        CBOREncoder::encode(&instance, obj)?;
-        Ok(take(&mut instance.borrow_mut().buffer))
-    }
-
     #[pymodule_init]
     fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
-        // Register cbor2.FrozenDict as a Mapping subclass
         let py = m.py();
-
-        #[cfg(not(Py_3_15))]
-        {
-            let frozen_dict_type = py.get_type::<FrozenDict>();
-            py.import("collections.abc")?
-                .getattr("Mapping")?
-                .call_method1("register", (frozen_dict_type,))?;
-        }
-
-        let undefined = Bound::new(py, UndefinedType)?;
-        m.add("undefined", undefined.clone())?;
-        UNDEFINED.get_or_init(py, || undefined.unbind());
 
         BREAK_MARKER.get_or_try_init(py, || {
             py.import("builtins")?

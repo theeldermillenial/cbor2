@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, BinaryIO, Literal, TypeAlias, TypeVar
 from . import CBORDecodeEOF, CBORDecoder, CBORSimpleValue, CBORTag, load, loads, undefined
 
 if sys.hexversion < 51314855:
-    from ._cbor2 import frozendict
+    from cbor2 import frozendict
 
 if TYPE_CHECKING:
     from . import ObjectHook, TagHook

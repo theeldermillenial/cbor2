@@ -1,14 +1,14 @@
-use crate::_cbor2::{BREAK_MARKER, SYS_MAXSIZE, UNDEFINED};
+use crate::_cbor2::{BREAK_MARKER, SYS_MAXSIZE};
 use crate::decoder::DecoderResult::{
     BeginFrame, CompleteFrame, ContinueFrame, Shareable, SharedReference, StringNamespace,
     StringReference, StringValue, Value,
 };
 #[cfg(not(Py_3_15))]
-use crate::types::FrozenDict;
+use crate::types::STOCK_FROZENDICT;
 use crate::types::{
-    CBORDecodeEOF, CBORDecodeError, CBORSimpleValue, CBORTag, DECIMAL_TYPE, FRACTION_TYPE,
-    IPV4ADDRESS_TYPE, IPV4INTERFACE_TYPE, IPV4NETWORK_TYPE, IPV6ADDRESS_TYPE, IPV6INTERFACE_TYPE,
-    IPV6NETWORK_TYPE, UUID_TYPE,
+    CBORDecodeEOF, CBORDecodeError, DECIMAL_TYPE, FRACTION_TYPE, IPV4ADDRESS_TYPE,
+    IPV4INTERFACE_TYPE, IPV4NETWORK_TYPE, IPV6ADDRESS_TYPE, IPV6INTERFACE_TYPE, IPV6NETWORK_TYPE,
+    STOCK_SIMPLE_VALUE, STOCK_TAG, STOCK_UNDEFINED, UUID_TYPE,
 };
 use crate::utils::{PyImportable, create_exc_from, raise_exc_from};
 use half::f16;
@@ -790,7 +790,7 @@ impl CBORDecoder {
             py: Python<'py>,
             items: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>,
         ) -> PyResult<Bound<'py, PyAny>> {
-            FrozenDict::from_items(py, items).map(|dict| dict.into_any())
+            STOCK_FROZENDICT.get(py)?.call1((items,))
         }
 
         #[inline]
@@ -1106,26 +1106,25 @@ impl CBORDecoder {
             _ => {
                 // For a tag with no designated decoder, check if we have a tag hook, and call
                 // that with the tag object, using its return value as the decoded value.
-                let tag = CBORTag::new(tagnum.into_bound_py_any(py)?, py.None().into_bound(py))?;
-                let bound_tag = Bound::new(py, tag)?.into_any();
-                let container = bound_tag.clone();
+                // Stock cbor2's CBORTag has a read-only value, so it is built once the
+                // value is decoded; a shared reference to the tag from inside its own value
+                // is therefore not resolvable.
                 let mut tag_hook = self
                     .tag_hook
                     .as_ref()
                     .map(|hook| hook.clone_ref(py).into_bound(py));
                 let callback = Box::new(move |item: Bound<'py, PyAny>, _immutable: bool| {
-                    let tag: &Bound<'py, CBORTag> = bound_tag.cast()?;
-                    tag.borrow_mut().value = item.unbind();
+                    let tag = STOCK_TAG.get(py)?.call1((tagnum, item))?;
                     if let Some(tag_hook) = tag_hook.take() {
-                        tag_hook.call1((&bound_tag, immutable)).map(CompleteFrame)
+                        tag_hook.call1((&tag, immutable)).map(CompleteFrame)
                     } else {
-                        Ok(CompleteFrame(bound_tag.clone()))
+                        Ok(CompleteFrame(tag))
                     }
                 });
                 return Ok(BeginFrame(
                     callback,
                     immutable,
-                    Some(container),
+                    None,
                     DisplayName::SemanticTag(tagnum),
                     false,
                 ));
@@ -1149,12 +1148,12 @@ impl CBORDecoder {
         match subtype {
             0..20 => {
                 let value = subtype.into_pyobject(py)?;
-                CBORSimpleValue::new(value)?.into_bound_py_any(py)
+                STOCK_SIMPLE_VALUE.get(py)?.call1((value,))
             }
             20 => Ok(false.into_bound_py_any(py)?),
             21 => Ok(true.into_bound_py_any(py)?),
             22 => Ok(py.None().into_bound_py_any(py)?),
-            23 => Ok(UNDEFINED.get(py).unwrap().into_bound_py_any(py)?),
+            23 => STOCK_UNDEFINED.get(py),
             24 => {
                 let value = self.read_exact::<1>(py)?[0];
                 if value < 0x20 {
@@ -1162,7 +1161,7 @@ impl CBORDecoder {
                         "invalid two-byte sequence for simple value",
                     ));
                 }
-                CBORSimpleValue::new(value.into_pyobject(py)?)?.into_bound_py_any(py)
+                STOCK_SIMPLE_VALUE.get(py)?.call1((value,))
             }
             25 => {
                 let bytes = self.read_exact::<2>(py)?;
@@ -1485,7 +1484,7 @@ impl CBORDecoder {
         let value = value.cast_into::<PyBytes>()?;
         let addr_obj = match value.len()? {
             4 | 16 => IPADDRESS_FUNC.get(py)?.call1((value,)),
-            6 => Ok(Bound::new(py, CBORTag::new_internal(260, value.into_any()))?.into_any()), // MAC address
+            6 => STOCK_TAG.get(py)?.call1((260, value)), // MAC address
             length => Err(CBORDecodeError::new_err(format!(
                 "invalid IP address length ({length})"
             ))),
