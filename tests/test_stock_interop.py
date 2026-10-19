@@ -80,3 +80,26 @@ def test_errors_are_cbor2_exceptions(payload: bytes, exc: type[Exception]) -> No
     with pytest.raises(exc) as info:
         cbor2pure.loads(payload)
     assert type(info.value).__module__ == "cbor2"
+
+
+@pytest.mark.skipif(sys.hexversion < 51314855, reason="frozendict is a builtin from Python 3.15")
+def test_builtin_frozendict() -> None:
+    key = next(iter(cbor2pure.loads(bytes.fromhex("a1a1010203"))))
+    assert type(key) is frozendict  # type: ignore[name-defined]  # noqa: F821
+
+
+def test_shared_container_cycle() -> None:
+    # tag 28 (shareable) array whose only element is a tag 29 reference to itself
+    value = cbor2pure.loads(bytes.fromhex("d81c81d81d00"))
+    assert value[0] is value
+
+
+def test_shared_reference_into_unknown_tag_from_its_own_value() -> None:
+    # tag 28 (shareable) wrapping unknown tag 1000 whose content refers back to the tag.
+    # cbor2's CBORTag.value is read-only, so the tag is built after its content and the
+    # reference cannot be resolved; cbor2 itself builds the cycle.
+    payload = bytes.fromhex("d81cd903e881d81d00")
+    stock = cbor2.loads(payload)
+    assert stock.value[0] is stock
+    with pytest.raises(cbor2.CBORDecodeError, match="shared value 0 has not been initialized"):
+        cbor2pure.loads(payload)
