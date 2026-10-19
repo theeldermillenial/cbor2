@@ -13,7 +13,7 @@ extensions = [
 templates_path = ["_templates"]
 source_suffix = ".rst"
 master_doc = "index"
-project = "cbor2"
+project = "cbor2pure"
 author = "Alex Grönholm"
 copyright = "2016, " + author
 

@@ -1,5 +1,5 @@
-cbor2 Benchmarks
-================
+cbor2pure Benchmarks
+====================
 
 To run the benchmarks::
 

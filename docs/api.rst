@@ -12,10 +12,10 @@ Encoding
 Decoding
 --------
 
-.. autofunction:: cbor2.loads
-.. autofunction:: cbor2.load
-.. autoclass:: cbor2.CBORDecoder
-.. autodecorator:: cbor2.shareable_decoder
+.. autofunction:: cbor2pure.loads
+.. autofunction:: cbor2pure.load
+.. autoclass:: cbor2pure.CBORDecoder
+.. autodecorator:: cbor2pure.shareable_decoder
 
 Types
 -----

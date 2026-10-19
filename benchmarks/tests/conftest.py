@@ -2,15 +2,9 @@ import json
 from collections import namedtuple
 from operator import attrgetter
 
-from cbor2.decoder import loads as pyloads
-from cbor2.encoder import dumps as pydumps
+import cbor2
 
-try:
-    import _cbor2
-except ModuleNotFoundError as e:
-    if not str(e).startswith("No module"):
-        load_exc = str(e)
-    _cbor2 = None
+import cbor2pure
 
 Contender = namedtuple("Contender", "name,dumps,loads")
 
@@ -19,11 +13,9 @@ contenders = []
 
 contenders.append(Contender("json", json.dumps, json.loads))
 
-
-if _cbor2 is not None:
-    contenders.append(Contender("ccbor2", _cbor2.dumps, _cbor2.loads))
-else:
-    contenders.append(Contender("ppcbor2", pydumps, pyloads))
+contenders.append(Contender("cbor2", cbor2.dumps, cbor2.loads))
+# cbor2pure is decode-only: it decodes what cbor2 encodes
+contenders.append(Contender("cbor2pure", cbor2.dumps, cbor2pure.loads))
 
 
 # See https://github.com/pytest-dev/pytest-cov/issues/418

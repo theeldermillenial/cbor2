@@ -136,7 +136,7 @@ namespace, whether hooked or not.
 
 Here's an example that keeps the chunk lengths of indefinite-length byte strings::
 
-    import cbor2
+    import cbor2pure
 
     class ChunkedBytes(bytes):
         chunks: tuple[int, ...] = ()
@@ -149,7 +149,7 @@ Here's an example that keeps the chunk lengths of indefinite-length byte strings
         return value
 
     payload = bytes.fromhex("5f4201024103ff")  # (_ h'0102', h'03')
-    value = cbor2.loads(payload, indefinite_string_hook=indefinite_string_hook)
+    value = cbor2pure.loads(payload, indefinite_string_hook=indefinite_string_hook)
     assert value == b"\x01\x02\x03"
     assert value.chunks == (2, 1)
 

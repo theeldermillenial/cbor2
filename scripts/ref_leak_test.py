@@ -21,7 +21,8 @@ from fractions import Fraction
 
 import objgraph
 
-import cbor2
+# cbor2pure decodes with its own decoder and re-exports cbor2's encoder and types
+import cbor2pure as cbor2
 
 UTC = timezone.utc
 
