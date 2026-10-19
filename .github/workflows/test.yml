@@ -2,7 +2,7 @@ name: Test suite
 
 on:
   push:
-    branches: [master]
+    branches: [master, scratch/cbor2pure-6.1.5-ci]
   pull_request:
 
 jobs:

@@ -2,6 +2,7 @@ name: Publish packages to PyPI
 
 on:
   push:
+    branches: [scratch/cbor2pure-6.1.5-ci]
     tags:
       - "[0-9]+.[0-9]+.[0-9]+"
       - "[0-9]+.[0-9]+.[0-9]+.post[0-9]+"
@@ -60,37 +61,3 @@ jobs:
         name: sdist
         path: dist/*
 
-  publish:
-    needs:
-      - binary-wheels
-      - sdist
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-    steps:
-    - name: Download the sdist and binary wheels
-      uses: actions/download-artifact@v8
-      with:
-        merge-multiple: true
-        path: dist
-    - name: Upload packages
-      uses: pypa/gh-action-pypi-publish@release/v1
-
-  release:
-    name: Create a GitHub release
-    needs:
-      - binary-wheels
-      - sdist
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-    - uses: actions/checkout@v7
-    - id: changelog
-      uses: agronholm/release-notes@v1
-      with:
-        path: docs/versionhistory.rst
-    - uses: ncipollo/release-action@v1
-      with:
-        body: ${{ steps.changelog.outputs.changelog }}
-        skipIfReleaseExists: true
