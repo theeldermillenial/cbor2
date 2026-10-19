@@ -11,42 +11,80 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "pypy-3.10"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "pypy-3.11"]
         include:
         - os: macos-latest
-          python-version: "3.9"
+          python-version: "3.10"
         - os: macos-latest
-          python-version: "3.13"
+          python-version: "3.14"
         - os: windows-latest
-          python-version: "3.9"
+          python-version: "3.10"
         - os: windows-latest
-          python-version: "3.13"
+          python-version: "3.14"
     runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ matrix.python-version }}
         allow-prereleases: true
         cache: pip
         cache-dependency-path: pyproject.toml
-    - name: Install the project and its dependencies
-      run: pip install --group test -e .
+    - name: Install cargo-llvm-cov (cached)
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-llvm-cov
+    - name: Install the project and its dependencies and run pytest
+      shell: bash
+      run: |
+        eval "$(cargo llvm-cov show-env --manifest-path rust/Cargo.toml --sh)"
+        pip install --group test -e .
+        coverage run -m pytest -v
+        cargo llvm-cov report --lcov --manifest-path rust/Cargo.toml --output-path coverage.lcov
       env:
-        CFLAGS: "-UNDEBUG"
-        CBOR2_BUILD_C_EXTENSION: "${{ matrix.python-version == 'pypy-3.10' && '0' || '1' }}"
-    - name: Test with pytest
-      run: coverage run -m pytest -v
-      env:
+        RUST_BACKTRACE: "1"
+        RUSTFLAGS: "--deny warnings"
         TZ: America/New_York
-    - name: Generate coverage report
+    - name: Generate Python coverage report
       run: coverage xml
+    - name: Trust Coveralls Homebrew tap (Homebrew 6 requirement)
+      if: runner.os == 'macOS'
+      run: brew trust coverallsapp/coveralls
     - name: Upload Coverage
       uses: coverallsapp/github-action@v2
       with:
         parallel: true
-        file: coverage.xml
+        files: coverage.xml coverage.lcov
+
+  test-i686:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - name: Build and test in 32-bit container
+      run: |
+        HOST_UID="$(id -u)"
+        HOST_GID="$(id -g)"
+        docker run \
+          --platform linux/i386 \
+          --user "${HOST_UID}:${HOST_GID}" \
+          -v "${{ github.workspace }}:/workspace" \
+          -w /workspace \
+          -e RUST_BACKTRACE=1 \
+          -e "RUSTFLAGS=--deny warnings" \
+          -e TZ=America/New_York \
+          python:3.14 \
+          bash -c '
+            export CARGO_HOME=/tmp/cargo
+            export RUSTUP_HOME=/tmp/rustup
+            mkdir -p "$CARGO_HOME" "$RUSTUP_HOME"
+            curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path --default-host i686-unknown-linux-gnu &&
+            export PATH="$PATH:$CARGO_HOME/bin" &&
+            python -m venv .venv &&
+            source .venv/bin/activate &&
+            pip install --group test -e . &&
+            python -m pytest --color=yes -v
+          '
 
   coveralls:
     name: Finish Coveralls

@@ -9,47 +9,85 @@ on:
       - "[0-9]+.[0-9]+.[0-9]+rc[0-9]+"
 
 jobs:
-  sdist-purewheel:
-    runs-on: ubuntu-latest
+  binary-wheels:
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - windows-latest
+          - windows-11-arm
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    environment: release
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
+    - name: Install the Rust toolchain
+      uses: actions-rs/toolchain@v1
+      if: runner.os == 'Windows'
+      with:
+        toolchain: stable
+    - name: Build wheels
+      uses: pypa/cibuildwheel@v4.2
+      env:
+        CIBW_ARCHS: "auto"
+        CIBW_TEST_GROUPS: "test"
+        CIBW_TEST_COMMAND: "pytest {project}/tests"
+        # Install Rust in cibuildwheel environments
+        CIBW_BEFORE_ALL_LINUX: curl -sSf https://sh.rustup.rs | sh -s -- -y
+        CIBW_ENVIRONMENT_LINUX: "PATH=$HOME/.cargo/bin:$PATH"
+        CIBW_BEFORE_ALL_MACOS: curl -sSf https://sh.rustup.rs | sh -s -- -y
+        CIBW_ENVIRONMENT_MACOS: "PATH=$HOME/.cargo/bin:$PATH"
+    - uses: actions/upload-artifact@v7
+      with:
+        name: wheels-${{ matrix.os }}
+        path: wheelhouse/*.whl
+
+  sdist:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+    - uses: actions/checkout@v7
     - name: Set up Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: 3.x
     - name: Install dependencies
       run: pip install build
-    - name: Create sdist and pure-Python wheel
-      run: python -m build .
-    - uses: actions/upload-artifact@v4
+    - name: Create the sdist
+      run: python -m build -s .
+    - uses: actions/upload-artifact@v7
       with:
-        name: dist
+        name: sdist
         path: dist/*
 
   publish:
     needs:
-      - sdist-purewheel
+      - binary-wheels
+      - sdist
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       id-token: write
     steps:
-    - name: Download generated packaging artifacts
-      uses: actions/download-artifact@v4
+    - name: Download the sdist and binary wheels
+      uses: actions/download-artifact@v8
       with:
-        name: dist
-        path: dist/
+        merge-multiple: true
+        path: dist
     - name: Upload packages
       uses: pypa/gh-action-pypi-publish@release/v1
 
   release:
     name: Create a GitHub release
     needs:
-      - sdist-purewheel
+      - binary-wheels
+      - sdist
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - id: changelog
       uses: agronholm/release-notes@v1
       with:
@@ -57,3 +95,4 @@ jobs:
     - uses: ncipollo/release-action@v1
       with:
         body: ${{ steps.changelog.outputs.changelog }}
+        skipIfReleaseExists: true

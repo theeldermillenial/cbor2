@@ -16,19 +16,20 @@ repos:
       - id: trailing-whitespace
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.10
+    rev: v0.15.20
     hooks:
-      - id: ruff
+      - id: ruff-check
         args: [--fix, --show-fixes]
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.19.1
+    rev: v2.1.0
     hooks:
       - id: mypy
+        pass_filenames: false
         additional_dependencies:
+          - hypothesis
           - pytest
-        files: cbor2/.+
 
   - repo: https://github.com/pre-commit/pygrep-hooks
     rev: v1.10.0
@@ -36,3 +37,11 @@ repos:
       - id: rst-backticks
       - id: rst-directive-colons
       - id: rst-inline-touching-normal
+
+  - repo: https://github.com/AndrejOrsula/pre-commit-cargo
+    rev: 0.5.0
+    hooks:
+      - id: cargo-fmt
+        args: ["--manifest-path", "rust/Cargo.toml"]
+ci:
+  autoupdate_schedule: quarterly

@@ -5,10 +5,10 @@
 The latest major/minor versions will get security updates and bug fixes.
 Earlier versions are unsupported.
 
-| Version  | Supported          |
-|----------| ------------------ |
-| 5.7.x    | :white_check_mark: |
-| < 5.7.x  | :x:                |
+| Version | Supported          |
+|---------| ------------------ |
+| 6.0.x   | :white_check_mark: |
+| < 6.0.x | :x:                |
 
 ## Reporting a Vulnerability
 
