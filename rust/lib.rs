@@ -82,6 +82,18 @@ mod _cbor2 {
     ///     deserialized array, and its return value is substituted for the array in the
     ///     deserialized output. It allows callers to preserve the distinction between
     ///     definite- and indefinite-length arrays, which is otherwise lost after decoding.
+    /// :param indefinite_string_hook:
+    ///     callable that takes 2 arguments: the decoded string (a :class:`bytes` for a byte
+    ///     string, or a :class:`str` for a text string), and a :class:`tuple` holding the
+    ///     length in bytes of each chunk, in encoding order. This callback is invoked only for
+    ///     strings that used indefinite-length encoding, and its return value is substituted
+    ///     for the string in the deserialized output. Definite-length strings never invoke it.
+    /// :param indefinite_map_hook:
+    ///     callable that takes 1 argument: the decoded map (a :class:`dict`, or a
+    ///     :class:`frozendict` when it is decoded as immutable). This callback is invoked only
+    ///     for maps that used indefinite-length encoding, before ``object_hook``, and its
+    ///     return value is substituted for the map (and passed to ``object_hook``, if set).
+    ///     Definite-length maps never invoke it.
     /// :param semantic_decoders:
     ///     An optional mapping for overriding the decoding for select semantic tags.
     ///     The value is a mapping of semantic tags (integers) to callables that take
@@ -113,6 +125,8 @@ mod _cbor2 {
         tag_hook = None,
         object_hook = None,
         array_hook = None,
+        indefinite_string_hook = None,
+        indefinite_map_hook = None,
         semantic_decoders = None,
         str_errors = "strict",
         read_size = 4096,
@@ -127,6 +141,8 @@ mod _cbor2 {
         tag_hook: Option<&Bound<'py, PyAny>>,
         object_hook: Option<&Bound<'py, PyAny>>,
         array_hook: Option<&Bound<'py, PyAny>>,
+        indefinite_string_hook: Option<&Bound<'py, PyAny>>,
+        indefinite_map_hook: Option<&Bound<'py, PyAny>>,
         semantic_decoders: Option<&Bound<'py, PyMapping>>,
         str_errors: &str,
         read_size: usize,
@@ -141,6 +157,8 @@ mod _cbor2 {
             tag_hook,
             object_hook,
             array_hook,
+            indefinite_string_hook,
+            indefinite_map_hook,
             semantic_decoders,
             str_errors,
             read_size,
@@ -174,6 +192,18 @@ mod _cbor2 {
     ///     deserialized array, and its return value is substituted for the array in the
     ///     deserialized output. It allows callers to preserve the distinction between
     ///     definite- and indefinite-length arrays, which is otherwise lost after decoding.
+    /// :param indefinite_string_hook:
+    ///     callable that takes 2 arguments: the decoded string (a :class:`bytes` for a byte
+    ///     string, or a :class:`str` for a text string), and a :class:`tuple` holding the
+    ///     length in bytes of each chunk, in encoding order. This callback is invoked only for
+    ///     strings that used indefinite-length encoding, and its return value is substituted
+    ///     for the string in the deserialized output. Definite-length strings never invoke it.
+    /// :param indefinite_map_hook:
+    ///     callable that takes 1 argument: the decoded map (a :class:`dict`, or a
+    ///     :class:`frozendict` when it is decoded as immutable). This callback is invoked only
+    ///     for maps that used indefinite-length encoding, before ``object_hook``, and its
+    ///     return value is substituted for the map (and passed to ``object_hook``, if set).
+    ///     Definite-length maps never invoke it.
     /// :param semantic_decoders:
     ///     An optional mapping for overriding the decoding for select semantic tags.
     ///     The value is a mapping of semantic tags (integers) to callables that take
@@ -203,6 +233,8 @@ mod _cbor2 {
         tag_hook = None,
         object_hook = None,
         array_hook = None,
+        indefinite_string_hook = None,
+        indefinite_map_hook = None,
         semantic_decoders = None,
         str_errors = "strict",
         max_depth = 400,
@@ -216,6 +248,8 @@ mod _cbor2 {
         tag_hook: Option<&Bound<'py, PyAny>>,
         object_hook: Option<&Bound<'py, PyAny>>,
         array_hook: Option<&Bound<'py, PyAny>>,
+        indefinite_string_hook: Option<&Bound<'py, PyAny>>,
+        indefinite_map_hook: Option<&Bound<'py, PyAny>>,
         semantic_decoders: Option<&Bound<'py, PyMapping>>,
         str_errors: &str,
         max_depth: usize,
@@ -243,6 +277,8 @@ mod _cbor2 {
             tag_hook,
             object_hook,
             array_hook,
+            indefinite_string_hook,
+            indefinite_map_hook,
             semantic_decoders,
             str_errors,
             0,

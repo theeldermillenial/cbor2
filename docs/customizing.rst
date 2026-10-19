@@ -8,12 +8,14 @@ Both the encoder and decoder can be customized to support a wider range of types
 Customizing the decoder
 -----------------------
 
-There are three ways to customize the decoding behavior, available as keyword arguments to
+There are several ways to customize the decoding behavior, available as keyword arguments to
 :func:`load`, :func:`loads` and :class:`CBORDecoder`:
 
 #. ``semantic_decoders``: lets you change how specific semantic tags are decoded
 #. ``tag_hook``: lets you define a catch-all for unhandled semantic tags
 #. ``object_hook``: lets you transform any newly-decoded dicts
+#. ``array_hook``, ``indefinite_string_hook`` and ``indefinite_map_hook``: let you observe how
+   arrays, strings and maps were framed in the encoded data
 
 Overriding the decoding of semantic tags
 ++++++++++++++++++++++++++++++++++++++++
@@ -104,6 +106,52 @@ instance::
 
 .. note:: Make sure you have well defined rules for special handling of dicts so you don't end up
     trying to convert all CBOR maps the decoder encounters.
+
+Preserving indefinite-length framing
+++++++++++++++++++++++++++++++++++++
+
+Arrays, byte strings, text strings and maps can each be encoded with either a definite or an
+indefinite length, and an indefinite-length string is further split into chunks. The decoded
+Python value is the same either way, so this framing is lost after decoding. Callers that need to
+re-encode data byte for byte (for example, because the encoded form is hashed or signed) can use
+these hooks to record it:
+
+* ``array_hook`` is called for every array with two arguments: the array (a :class:`list`, or a
+  :class:`tuple` when decoded as immutable) and a boolean that is :data:`True` if the array used
+  indefinite-length encoding.
+* ``indefinite_string_hook`` is called only for indefinite-length strings, with two arguments: the
+  joined string (:class:`bytes` for a byte string, :class:`str` for a text string) and a
+  :class:`tuple` holding the length in bytes of each chunk, in encoding order. Empty chunks are
+  included, and an empty indefinite-length string is reported with an empty tuple.
+* ``indefinite_map_hook`` is called only for indefinite-length maps, with one argument: the map (a
+  :class:`dict`, or a :class:`frozendict` when decoded as immutable, as map keys always are). It
+  runs before ``object_hook``, which then receives its return value.
+
+Each hook's return value replaces the decoded value. A replacement for an item that is used as a
+map key must be hashable. Definite-length strings and maps never invoke the indefinite hooks, so
+setting them adds no cost when decoding definite-length data. Hooks are applied to the content of
+a semantic tag before the tag itself is decoded, and a shared reference to a hooked item resolves
+to the hook's return value. Indefinite-length strings are never added to a string reference
+namespace, whether hooked or not.
+
+Here's an example that keeps the chunk lengths of indefinite-length byte strings::
+
+    import cbor2
+
+    class ChunkedBytes(bytes):
+        chunks: tuple[int, ...] = ()
+
+    def indefinite_string_hook(value: bytes | str, chunks: tuple[int, ...]) -> object:
+        if isinstance(value, bytes):
+            value = ChunkedBytes(value)
+            value.chunks = chunks
+
+        return value
+
+    payload = bytes.fromhex("5f4201024103ff")  # (_ h'0102', h'03')
+    value = cbor2.loads(payload, indefinite_string_hook=indefinite_string_hook)
+    assert value == b"\x01\x02\x03"
+    assert value.chunks == (2, 1)
 
 Dealing with immutable containers
 +++++++++++++++++++++++++++++++++
