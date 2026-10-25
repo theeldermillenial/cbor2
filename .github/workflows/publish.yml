@@ -31,9 +31,7 @@ jobs:
       env:
         CIBW_ARCHS: "auto"
         CIBW_TEST_GROUPS: "test"
-        # The decoder builds cbor2's own classes, so the tests need stock cbor2 installed
-        # (keep in step with [project] dependencies)
-        CIBW_TEST_REQUIRES: "cbor2 >= 6.1.5, < 7"
+        # The tests need stock cbor2, which the wheel's own dependency installs
         CIBW_TEST_COMMAND: "pytest {project}/tests"
         # Install Rust in cibuildwheel environments
         CIBW_BEFORE_ALL_LINUX: curl -sSf https://sh.rustup.rs | sh -s -- -y
