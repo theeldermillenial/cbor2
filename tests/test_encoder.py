@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from email.mime.text import MIMEText
 from fractions import Fraction
+from importlib.metadata import version
 from io import BytesIO
 from ipaddress import (
     IPv4Address,
@@ -394,6 +395,11 @@ def test_regex() -> None:
     assert dumps(re.compile("hello (world)")) == expected
 
 
+# cbor2pure re-exports cbor2's encoder, so this needs a cbor2 release with #355
+@pytest.mark.skipif(
+    tuple(int(part) for part in version("cbor2").split(".")[:3]) <= (6, 1, 5),
+    reason="the installed cbor2 encodes a bytes pattern as its repr (fixed after 6.1.5)",
+)
 def test_regex_bytes_pattern() -> None:
     expected = unhexlify("d8234d68656c6c6f2028776f726c6429")
     encoded = dumps(re.compile(rb"hello (world)"))
