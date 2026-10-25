@@ -5,6 +5,15 @@ Version history
 
 This library adheres to `Semantic Versioning 2.0 <http://semver.org/>`_.
 
+**6.1.5.post4** (fork release: 6.1.5.post3 plus the indefinite string and map hooks)
+
+- Added the ``indefinite_string_hook`` and ``indefinite_map_hook`` parameters to
+  :class:`CBORDecoder`, :func:`load` and :func:`loads`. ``indefinite_string_hook`` is called for
+  each indefinite-length byte or text string with the joined value and a tuple of the byte length
+  of each chunk, in encoding order. ``indefinite_map_hook`` is called for each indefinite-length
+  map with the decoded map, before ``object_hook``. Their return values are substituted for the
+  decoded value. Neither is called for definite-length items, which decode as before.
+
 **6.1.5.post3** (fork release on 6.1.5 plus the upstream changes listed as unreleased below)
 
 - Includes the upstream fixes merged after 6.1.5, among them the shared-reference depth fix for
